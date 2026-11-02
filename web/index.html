@@ -1,0 +1,1689 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{margin:0}[hidden]{display:none!important}</style>
+<title>赤ペン先生デスク</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDPMincho:wght@400;700&display=swap">
+<style>
+/* Layout: 職員室の書類トレイ。上にタブ、各タブは「提出物（左）→ 赤ペン結果（右）」の2列、狭い画面では縦積み */
+:root {
+  --paper: #f6f7f9;
+  --sheet: #ffffff;
+  --ink: #1d2a3a;
+  --ink-soft: #5a6676;
+  --rule: #d9dee6;
+  --akapen: #c8322b;
+  --akapen-bg: #fcebea;
+  --ok: #2f7a4f;
+  --ok-bg: #e6f3eb;
+  --warn: #9a6a00;
+  --warn-bg: #fdf3d8;
+  --focus: #2f5fa8;
+  --font-display: "BIZ UDPMincho", "Yu Mincho", "Hiragino Mincho ProN", serif;
+  --font-body: "BIZ UDPGothic", "Yu Gothic", "Hiragino Sans", "Meiryo", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #141a22; --sheet: #1c2430; --ink: #e6ebf2; --ink-soft: #9aa6b6; --rule: #2e3948;
+    --akapen: #ff7a70; --akapen-bg: #3a1f1f; --ok: #6fcf97; --ok-bg: #18301f;
+    --warn: #f2c14e; --warn-bg: #3a2f12; --focus: #7aa7ff;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #141a22; --sheet: #1c2430; --ink: #e6ebf2; --ink-soft: #9aa6b6; --rule: #2e3948;
+  --akapen: #ff7a70; --akapen-bg: #3a1f1f; --ok: #6fcf97; --ok-bg: #18301f;
+  --warn: #f2c14e; --warn-bg: #3a2f12; --focus: #7aa7ff;
+}
+* { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.7; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 48px; display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 20px; border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
+h1 { font-family: var(--font-display); font-size: 28px; margin: 0; letter-spacing: .04em; text-wrap: balance; }
+h1 .pen { color: var(--akapen); }
+.stamp { font-size: 12.5px; color: var(--ink-soft); }
+.notice { font-size: 13.5px; color: var(--ink-soft); background: var(--sheet); border: 1px dashed var(--rule); border-radius: 6px; padding: 10px 14px; margin: 0; }
+.notice b { color: var(--ink); }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--rule); }
+.tab { font: inherit; font-weight: 700; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--ink-soft); padding: 8px 14px; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--akapen); }
+.tab:hover { color: var(--ink); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 780px) { .panel { grid-template-columns: 1fr; } }
+.col { display: grid; gap: 12px; }
+.sheet { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; }
+h2 { font-family: var(--font-display); font-size: 18px; margin: 0; }
+label { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); letter-spacing: .05em; display: grid; gap: 4px; }
+input, select, textarea { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 7px 9px; width: 100%; }
+textarea { resize: vertical; line-height: 1.75; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.row > label { flex: 1 1 160px; }
+.btn { font: inherit; font-weight: 700; border-radius: 4px; padding: 8px 16px; cursor: pointer; border: 1px solid var(--ink); background: var(--ink); color: var(--sheet); }
+.btn.ghost { background: transparent; color: var(--ink); }
+.btn:hover { opacity: .88; }
+.meta { font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.issues li { border-left: 3px solid var(--akapen); background: var(--akapen-bg); padding: 8px 12px; border-radius: 0 4px 4px 0; }
+.issues li.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+.issues .why { display: block; font-size: 12.5px; color: var(--ink-soft); }
+.chip { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.chip.red { color: var(--akapen); background: var(--akapen-bg); }
+.chip.green { color: var(--ok); background: var(--ok-bg); }
+.chip.amber { color: var(--warn); background: var(--warn-bg); }
+.out { font-family: var(--font-body); background: var(--paper); min-height: 260px; }
+.cards { display: grid; gap: 10px; }
+.card { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 14px; display: grid; gap: 6px; }
+.card.urgent { border-color: var(--akapen); }
+.card-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.card-head strong { font-size: 15px; }
+.card ol { margin: 0; padding-left: 1.4em; }
+.card .reason { font-size: 12.5px; color: var(--akapen); }
+details { font-size: 13px; color: var(--ink-soft); }
+details pre { white-space: pre-wrap; font-family: var(--font-body); margin: 6px 0 0; }
+.hidden-file { font-size: 13px; }
+.stack { display: grid; gap: 20px; }
+.home { display: grid; gap: 18px; }
+.intro { gap: 14px; }
+.intro h2 { font-size: 21px; text-wrap: balance; }
+.intro p { margin: 0; max-width: 65ch; }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.facts li { font-size: 13.5px; color: var(--ink-soft); border-top: 2px solid var(--ink); padding-top: 6px; }
+.facts b { display: block; color: var(--ink); }
+.tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.tool { background: var(--sheet); border: 1px solid var(--rule); border-radius: 6px; padding: 16px; display: grid; gap: 10px; grid-template-rows: auto auto 1fr auto; }
+.tool h3 { font-family: var(--font-display); font-size: 17px; margin: 0; }
+.tool p { margin: 0; font-size: 13.5px; }
+.tool ol { margin: 0; padding-left: 1.3em; font-size: 13px; color: var(--ink-soft); }
+.tool .btn { justify-self: start; }
+.howto { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+.howto b { color: var(--ink); }
+.span2 { grid-column: 1 / -1; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+th, td { border: 1px solid var(--rule); padding: 5px 7px; text-align: center; vertical-align: middle; }
+th { background: var(--paper); font-weight: 700; color: var(--ink-soft); font-size: 12.5px; white-space: nowrap; }
+td.left { text-align: left; }
+td.off { color: var(--akapen); background: var(--akapen-bg); font-weight: 700; font-size: 12.5px; }
+td.furi { color: var(--warn); background: var(--warn-bg); font-weight: 700; }
+td.out { color: var(--rule); }
+tr.dim td { color: var(--ink-soft); }
+#weekTable td.left { min-width: 9em; font-size: 12.5px; }
+.wd-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.wd { border: 1px solid var(--rule); border-radius: 6px; padding: 8px 4px; text-align: center; display: grid; gap: 0; }
+.wd b { font-family: var(--font-display); font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.wd.short { border-color: var(--akapen); color: var(--akapen); background: var(--akapen-bg); }
+.teachers { display: grid; gap: 10px; }
+.teacher { border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; display: grid; gap: 8px; }
+.teacher .x { margin-left: auto; }
+.avail { display: grid; grid-template-columns: auto repeat(5, minmax(32px, 1fr)); gap: 3px; font-size: 12px; max-width: 360px; }
+.avail .ah { color: var(--ink-soft); text-align: center; align-self: center; padding-right: 4px; }
+.avail button { font: inherit; border: 1px solid var(--rule); background: var(--paper); color: var(--ink-soft); border-radius: 3px; padding: 3px 0; cursor: pointer; }
+.avail button[aria-pressed="true"] { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); font-weight: 700; }
+table.edit td { padding: 4px; }
+table.edit input, table.edit select { padding: 4px 6px; min-width: 6em; }
+table.edit input.num { width: 4.5em; min-width: 0; }
+table.edit input.chk { width: auto; min-width: 0; }
+.x { font: inherit; font-size: 12.5px; border: 0; background: none; color: var(--ink-soft); cursor: pointer; padding: 2px 6px; text-decoration: underline; }
+.tt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+td.slot { height: 50px; font-size: 12.5px; line-height: 1.35; min-width: 4.5em; }
+td.slot small { display: block; color: var(--ink-soft); font-size: 11.5px; }
+td.ext { background: var(--warn-bg); }
+td.empty { color: var(--rule); }
+.items { display: grid; gap: 8px; }
+.item { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-left: 3px solid var(--rule); background: var(--paper); border-radius: 0 4px 4px 0; }
+.item.k-off { border-left-color: var(--akapen); }
+.item.k-event { border-left-color: var(--focus); }
+.item.k-furi { border-left-color: var(--warn); }
+.item select, .item input { width: auto; padding: 4px 6px; background: var(--sheet); }
+.item input[data-k="name"] { flex: 1 1 8em; min-width: 6em; }
+.tilde { color: var(--ink-soft); }
+button.cell { font: inherit; color: inherit; background: none; border: 0; width: 100%; padding: 4px 2px; cursor: pointer; border-radius: 3px; line-height: 1.35; }
+button.cell:hover { background: var(--rule); }
+button:disabled { opacity: .45; cursor: default; }
+#weekTable td.c { padding: 2px; min-width: 2.8em; }
+td.sat button.cell { color: var(--rule); }
+td.sat button.cell:hover { color: var(--warn); background: var(--warn-bg); }
+.toast { margin: 0; min-height: 1.4em; font-size: 13.5px; color: var(--focus); font-weight: 700; }
+.dirty { margin: 0; padding: 8px 12px; background: var(--warn-bg); color: var(--warn); border-radius: 4px; font-size: 13.5px; font-weight: 700; }
+.load { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.grp th { text-align: left; background: var(--sheet); color: var(--ink); font-size: 14px; }
+.grp .meta { margin-left: 10px; font-weight: 400; }
+.seg { display: flex; flex-wrap: wrap; gap: 14px; margin-left: auto; }
+.seg label { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--ink); letter-spacing: 0; }
+.seg input { width: auto; }
+td.slot { padding: 2px; }
+td.slot button.cell { min-height: 46px; display: grid; place-content: center; }
+td.slot.sel { outline: 3px solid var(--focus); outline-offset: -3px; }
+.pin { display: block; font-size: 10.5px; color: var(--focus); font-weight: 700; }
+td.na { background: repeating-linear-gradient(45deg, var(--paper), var(--paper) 4px, var(--rule) 4px, var(--rule) 5px); color: var(--ink-soft); font-size: 11.5px; }
+.avail button.ah { background: none; border-color: transparent; color: var(--ink-soft); font-weight: 700; }
+.avail button.ah:hover { color: var(--ink); border-color: var(--rule); }
+label.inline { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--ink); letter-spacing: 0; align-self: center; }
+label.inline input { width: auto; }
+.free { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.free li { display: grid; grid-template-columns: 6.5em auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--rule); border-left: 3px solid var(--rule); border-radius: 0 4px 4px 0; background: var(--sheet); }
+.free li.nolesson { border-left-color: var(--ok); }
+.free li.msg { display: block; color: var(--ink-soft); }
+.free .fd { font-weight: 700; font-variant-numeric: tabular-nums; }
+.free .fx { font-size: 13.5px; }
+.bar { display: flex; gap: 2px; }
+.bar span, .key { width: 20px; height: 22px; border-radius: 2px; font-size: 10.5px; display: inline-grid; place-content: center; font-variant-numeric: tabular-nums; box-sizing: border-box; }
+.key { width: 12px; height: 12px; vertical-align: -1px; margin-left: 8px; }
+.bar .f, .key.f { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); }
+.bar .l, .key.l { background: var(--rule); color: var(--ink-soft); }
+.bar .m, .key.m { background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); }
+.bar .o, .key.o { background: var(--paper); color: var(--ink-soft); border: 1px dashed var(--rule); }
+.legend .key:first-child { margin-left: 0; }
+@media (max-width: 480px) { .free li { grid-template-columns: 1fr auto; } .free .fx { grid-column: 1 / -1; } }
+.head-r { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.ai-status { font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+.ai-status.on { color: var(--ok); background: var(--ok-bg); }
+.ai-status.off { color: var(--ink-soft); background: var(--paper); border: 1px solid var(--rule); }
+.nl { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--focus); border-radius: 6px; }
+.preview { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+.preview .note { color: var(--warn); font-weight: 700; }
+.chip.ai { color: var(--focus); background: var(--sheet); border: 1px solid var(--focus); }
+.mic.rec { background: var(--akapen); color: var(--sheet); border-color: var(--akapen); }
+@media (prefers-reduced-motion: no-preference) { .mic.rec { animation: pulse 1.2s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: .7; } }
+.check { margin: 0; font-size: 13.5px; font-weight: 700; min-height: 1.4em; }
+.check.ok { color: var(--ok); }
+.check.ng, .toast.ng { color: var(--akapen); }
+@media (prefers-reduced-motion: no-preference) { .tab { transition: color .15s, border-color .15s; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="pen">赤ペン</span>先生デスク</h1>
+    <span class="head-r"><span class="ai-status off" id="aiStatus">分身：確認中…</span><span class="ai-status off" id="voiceStatus">音声：確認中…</span><span class="stamp" id="today"></span></span>
+  </header>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t0" aria-selected="true" data-p="p0">ホーム</button>
+    <button class="tab" role="tab" id="t2" aria-selected="false" data-p="p2">一括仕分け＆3行要約</button>
+    <button class="tab" role="tab" id="t3" aria-selected="false" data-p="p3">学期予定</button>
+    <button class="tab" role="tab" id="t4" aria-selected="false" data-p="p4">時間割</button>
+    <button class="tab" role="tab" id="t5" aria-selected="false" data-p="p5">空き日さがし</button>
+  </nav>
+
+  <!-- ホーム -->
+  <section class="home" id="p0" role="tabpanel">
+    <div class="sheet intro">
+      <h2>教務の定型作業を、学校の決まりに沿って手早く片づける</h2>
+      <p>提出書類の仕分けから学期予定・時間割づくりまで、4つの道具をまとめた試作版です。どの画面にもサンプルが入っているので、開いてすぐ動きを確かめられます。</p>
+      <ul class="facts">
+        <li><b>AIはこのPCの中だけで動きます</b>分身（Ollama）が言葉の読み取りと文面づくりを担当し、日付や時間割の計算はプログラムが正確に行います。</li>
+        <li><b>何も保存しません</b>入力はこのブラウザの中だけで処理し、閉じると消えます。</li>
+        <li><b>話しかけても使えます</b>「声で入力」を押して話すと、このPCの Whisper が文字にします。録音は保存しません。</li>
+        <li><b>ネットにつながなくても動きます</b>オフラインのときは文字が標準のフォントになるだけです。</li>
+      </ul>
+    </div>
+    <div class="sheet">
+      <h2>分身の設定 <span class="meta">文面づくりで「あなたらしさ」を真似るのに使います</span></h2>
+      <div class="row">
+        <label for="meName">あなたの名前 <input id="meName" value="中村"></label>
+        <label for="meTeam">所属 <input id="meTeam" value="教務課"></label>
+        <label for="aiModel">使うモデル <select id="aiModel"><option>確認中…</option></select></label>
+      </div>
+      <label for="meStyle">普段のメールの例（1〜2通貼り付けると、口調や挨拶を真似ます）
+        <textarea id="meStyle" rows="8">〇〇さん
+
+お疲れさまです。教務課の中村です。
+提出してくれた書類、確認しました。ありがとうございます。
+
+一点だけ確認させてください。
+（用件）
+
+わからないことがあれば、気軽に職員室まで来てくださいね。
+
+教務課 中村</textarea>
+      </label>
+      <p class="meta" style="margin:0">分身はこのPCの Ollama で動き、入力した内容は外に送りません。分身が作った文面は下書きです。必ず確認してから使ってください。</p>
+    </div>
+    <div class="tools">
+      <article class="tool">
+        <h3>一括仕分け＆3行要約</h3>
+        <p>複数の提出ファイルから、提出者・種類・3行要約を一覧にします。気になる言葉を含む書類には「要対応」を付けます。</p>
+        <ol><li>.txt ファイルをまとめて選ぶ</li><li>「要対応」の書類から確認する</li><li>「一覧を空にする」でやり直す</li></ol>
+        <button class="btn" data-go="p2">開く</button>
+      </article>
+      <article class="tool">
+        <h3>学期予定</h3>
+        <p>祝日と休業日を除いて曜日ごとの授業回数を数え、目標に足りない曜日と振替授業日の候補を出します。</p>
+        <ol><li>前期・後期と日付を選ぶ</li><li>休業日と行事を1行ずつ書く</li><li>足りない曜日に振替授業日を足す</li></ol>
+        <button class="btn" data-go="p3">開く</button>
+      </article>
+      <article class="tool">
+        <h3>時間割</h3>
+        <p>外部講師が来校できるコマに合わせて、クラスごとの時間割を自動で組みます。来校日数と待ち時間が少ない案を選びます。</p>
+        <ol><li>先生を登録し、外部講師の来校コマを選ぶ</li><li>クラスごとの科目とコマ数を入れる</li><li>「時間割を組む」、違えば「別の案を出す」</li></ol>
+        <button class="btn" data-go="p4">開く</button>
+      </article>
+      <article class="tool">
+        <h3>空き日さがし</h3>
+        <p>自分の時間割・学期予定・会議などの予定を合わせて、空いている日とコマを探し、日程候補の文面を作ります。</p>
+        <ol><li>自分の名前と期間を選ぶ</li><li>会議や出張などの予定を足す</li><li>候補を確認して文面を「コピー」</li></ol>
+        <button class="btn" data-go="p5">開く</button>
+      </article>
+    </div>
+  </section>
+
+  <!-- ② -->
+  <section class="panel" id="p2" role="tabpanel" hidden>
+    <p class="howto span2"><b>使い方：</b>提出ファイル（.txt）をまとめて選ぶと、右側の一覧に追加されます。赤い「要対応」から確認してください。</p>
+    <div class="col">
+      <div class="sheet">
+        <h2>提出ファイル</h2>
+        <label for="files">テキストファイル（.txt）をまとめて選択
+          <input type="file" id="files" accept=".txt,text/plain" multiple class="hidden-file">
+        </label>
+        <p class="meta" style="margin:0">最初はサンプルの提出物3件を読み込んでいます。ファイルを選ぶと一覧に追加されます。</p>
+        <div class="row"><button class="btn ghost" id="clearFiles">一覧を空にする</button></div>
+        <div class="nl">
+          <div class="row"><button class="btn" id="aiSort" data-ai>分身で読む（要約・様子の判断・声かけ）</button><button type="button" class="btn ghost mic" data-mic="memo" data-status="aiSortStatus">声で面談メモを追加</button></div>
+          <p class="meta" style="margin:0">言い回しから学生の様子を読み取り、3行要約と、気になる学生への声かけの下書きを作ります。</p>
+          <p class="toast" id="aiSortStatus" role="status"></p>
+        </div>
+      </div>
+      <details open><summary>要対応と判定する言葉</summary><pre id="urgentView"></pre></details>
+    </div>
+    <div class="col">
+      <div class="meta" id="sortSummary"></div>
+      <div class="cards" id="cards"></div>
+    </div>
+  </section>
+
+  <!-- 学期予定 -->
+  <section class="panel" id="p3" role="tabpanel" hidden>
+    <p class="howto span2"><b>使い方：</b>左で学期の日付と休み・行事を入れると、右と下の予定表がすぐ変わります。予定表のマスを押しても、休みや振替授業を切り替えられます。</p>
+    <div class="col">
+      <div class="sheet">
+        <h2>学期の設定</h2>
+        <div class="row">
+          <label for="termName">学期
+            <select id="termName"><option>前期</option><option selected>後期</option></select>
+          </label>
+          <label for="target">各曜日の目標回数
+            <input type="number" id="target" value="15" min="1" max="30">
+          </label>
+        </div>
+        <div class="row">
+          <label for="termStart">授業開始日 <input type="date" id="termStart"></label>
+          <label for="termEnd">授業最終日 <input type="date" id="termEnd"></label>
+        </div>
+        <p class="meta" style="margin:0">学期を切り替えると、その学期のサンプルが入ります。2026年4月〜2027年3月の祝日は自動で休みになります。</p>
+      </div>
+      <div class="sheet">
+        <h2>休み・行事・振替授業</h2>
+        <div class="nl">
+          <label for="termNL">分身に話し言葉で頼む
+            <textarea id="termNL" rows="2" placeholder="例：12/21から1/7までは冬休み。2月の第2週は後期試験。1/16の土曜は金曜の授業をする。"></textarea>
+          </label>
+          <div class="row"><button type="button" class="btn ghost mic" data-mic="termNL" data-status="termNLStatus">声で入力</button><button class="btn" id="termNLBtn" data-ai>読み取る</button></div>
+          <p class="toast" id="termNLStatus" role="status"></p>
+          <div id="termNLPreview"></div>
+        </div>
+        <p class="meta" style="margin:0">1日だけなら終了日は空欄でかまいません。振替授業は、その日に何曜日の時間割で授業するかを選びます。</p>
+        <div class="items" id="termItems"></div>
+        <div class="row">
+          <button class="btn ghost" data-add="off">＋ 休み</button>
+          <button class="btn ghost" data-add="event">＋ 行事</button>
+          <button class="btn ghost" data-add="furi">＋ 振替授業</button>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="sheet">
+        <h2>曜日ごとの授業回数 <span class="meta" id="termTotal"></span></h2>
+        <div class="wd-grid" id="wdCounts"></div>
+        <ul class="issues" id="termWarn"></ul>
+        <div class="row"><button class="btn" id="autoFuri">足りない回数を土曜日の振替授業で埋める</button></div>
+        <div class="nl">
+          <div class="row"><button class="btn ghost" id="termNoticeBtn" data-ai>学生向けのお知らせ文を分身が作る</button></div>
+          <p class="toast" id="termNoticeStatus" role="status"></p>
+          <textarea id="termNotice" class="out" rows="12" hidden aria-label="学期予定のお知らせ文"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="sheet span2">
+      <h2>週ごとの予定</h2>
+      <p class="meta" style="margin:0">数字＝その曜日の何回目の授業か　／　祝＝祝日　／　休＝休み　／　振替は「金14」のように表示。<b>マスを押すと</b>、授業日→休み、休み→授業日、土曜日→振替授業日 に切り替わります。</p>
+      <p class="toast" id="termToast" role="status"></p>
+      <div class="table-wrap"><table id="weekTable"></table></div>
+    </div>
+  </section>
+
+  <!-- 時間割 -->
+  <section class="stack" id="p4" role="tabpanel" hidden>
+    <p class="howto"><b>使い方：</b>先生と授業を入れて「時間割を組む」。できた時間割はマスを2つ順に押すと入れ替えられます。動かした授業は「固定」になり、組み直しても残ります。</p>
+    <div class="panel">
+      <div class="col">
+        <div class="sheet">
+          <h2>基本設定</h2>
+          <div class="row">
+            <label for="periods">1日のコマ数（月〜金）
+              <input type="number" id="periods" value="4" min="1" max="8">
+            </label>
+            <label for="classesIn">クラス（「、」区切り）
+              <input id="classesIn" value="1年A、1年B、2年A">
+            </label>
+          </div>
+        </div>
+        <div class="sheet">
+          <h2>先生</h2>
+          <p class="meta" style="margin:0">外部講師は、来校できるコマを押して「可」にします。曜日や時限の見出しを押すと、その列や行をまとめて切り替えます。</p>
+          <div class="teachers" id="teacherList"></div>
+          <div class="nl">
+            <label for="availNL">講師からの連絡を分身に読ませる（メール本文や電話のメモ）
+              <textarea id="availNL" rows="3" placeholder="例：火曜は午前なら大丈夫です。木曜は終日行けますが、第3週だけは難しいです。"></textarea>
+            </label>
+            <div class="row">
+              <label for="availWho">講師 <select id="availWho"></select></label>
+              <button type="button" class="btn ghost mic" data-mic="availNL" data-status="availNLStatus">声で入力</button><button class="btn" id="availNLBtn" data-ai>読み取る</button>
+            </div>
+            <p class="toast" id="availNLStatus" role="status"></p>
+            <div id="availNLPreview"></div>
+          </div>
+          <div class="row">
+            <label for="newTeacher">名前 <input id="newTeacher" placeholder="例：木村"></label>
+            <label for="newKind">区分
+              <select id="newKind"><option value="in">常勤</option><option value="ext">外部講師</option></select>
+            </label>
+            <button class="btn ghost" id="addTeacher">先生を追加</button>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="sheet">
+          <h2>授業（クラスごとの科目と週のコマ数）</h2>
+          <div class="load" id="teacherLoad" aria-label="先生ごとの担当コマ数"></div>
+          <div class="table-wrap"><table id="lessonTable" class="edit"></table></div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet">
+      <div class="row">
+        <button class="btn" id="solveBtn">時間割を組む</button>
+        <button class="btn ghost" id="unpin">固定を全部外す</button>
+        <div class="seg" role="radiogroup" aria-label="表示">
+          <label for="vClass"><input type="radio" name="ttView" id="vClass" value="class" checked>クラス別</label>
+          <label for="vTeacher"><input type="radio" name="ttView" id="vTeacher" value="teacher">先生別</label>
+        </div>
+      </div>
+      <p class="dirty" id="ttDirty" hidden>先生や授業の条件が変わりました。「時間割を組む」を押すと反映されます。</p>
+      <p class="meta" style="margin:0">押すたびに別の案を出します。外部講師の来校日数と待ち時間（空きコマ）が少ない案を選びます。</p>
+      <ul class="issues" id="ttWarn"></ul>
+      <p class="toast" id="ttToast" role="status"></p>
+    </div>
+    <div class="sheet">
+      <h2>外部講師の来校まとめ</h2>
+      <div class="table-wrap"><table id="extSummary"></table></div>
+      <div class="nl">
+        <div class="row">
+          <label for="mailWho">講師 <select id="mailWho"></select></label>
+          <label for="mailKind">用件
+            <select id="mailKind"><option>来校のお願い（担当コマの依頼）</option><option>時間割の確認</option><option>時間割変更のお知らせ</option></select>
+          </label>
+          <button class="btn" id="mailBtn" data-ai>連絡文を分身が作る</button>
+        </div>
+        <p class="toast" id="mailStatus" role="status"></p>
+        <textarea id="extMail" class="out" rows="14" hidden aria-label="講師への連絡文"></textarea>
+      </div>
+    </div>
+    <div class="tt-grid" id="timetables"></div>
+  </section>
+
+  <!-- 空き日さがし -->
+  <section class="panel" id="p5" role="tabpanel" hidden>
+    <p class="howto span2"><b>使い方：</b>自分の名前と期間を選ぶと、時間割と学期予定から授業のない日・コマを探します。会議や出張など、授業以外の予定は左に追加してください。</p>
+    <div class="col">
+      <div class="sheet">
+        <h2>条件</h2>
+        <div class="nl">
+          <label for="freeNL">分身に話し言葉で頼む
+            <textarea id="freeNL" rows="2" placeholder="例：来週、山田さんと進路面談を2コマ取りたい。できれば午後で。"></textarea>
+          </label>
+          <div class="row"><button type="button" class="btn ghost mic" data-mic="freeNL" data-status="freeNLStatus">声で入力</button><button class="btn" id="freeNLBtn" data-ai>読み取る</button></div>
+          <p class="toast" id="freeNLStatus" role="status"></p>
+        </div>
+        <div class="row">
+          <label for="fwho">自分（先生）<select id="fwho"></select></label>
+          <label for="fneed">必要な空き
+            <select id="fneed">
+              <option value="1">1コマ以上</option>
+              <option value="2" selected>2コマ連続</option>
+              <option value="3">3コマ連続</option>
+              <option value="all">時間帯まるごと</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label for="ffrom">期間（開始）<input type="date" id="ffrom"></label>
+          <label for="fto">期間（終了）<input type="date" id="fto"></label>
+        </div>
+        <div class="row">
+          <label for="fwhen">時間帯
+            <select id="fwhen"><option value="any">いつでも</option><option value="am">午前</option><option value="pm">午後</option></select>
+          </label>
+          <label for="fsat" class="inline"><input type="checkbox" id="fsat">土曜日も含める</label>
+        </div>
+        <p class="meta" style="margin:0">日曜日と祝日は候補に入れません（祝日でも振替授業がある日は入れます）。</p>
+      </div>
+      <div class="sheet">
+        <h2>授業以外の自分の予定</h2>
+        <div class="items" id="myItems"></div>
+        <div class="row">
+          <button class="btn ghost" data-my="week">＋ 毎週の予定</button>
+          <button class="btn ghost" data-my="date">＋ 日付の予定</button>
+        </div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="sheet">
+        <h2>空いている日 <span class="meta" id="freeCount"></span></h2>
+        <p class="meta legend" style="margin:0"><span class="key f"></span>空き <span class="key l"></span>授業 <span class="key m"></span>自分の予定 <span class="key o"></span>時間帯の外</p>
+        <ol class="free" id="freeList"></ol>
+      </div>
+      <div class="sheet">
+        <h2>日程候補の文面</h2>
+        <textarea id="freeText" class="out" rows="9" aria-label="日程候補の文面"></textarea>
+        <div class="row"><button class="btn" id="freeWriteBtn" data-ai>分身が文面を書く</button></div>
+        <p class="check" id="freeCheck" role="status"></p>
+        <div class="row"><button class="btn ghost" id="copyFree">コピー</button><span class="meta" id="copiedFree"></span></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const today = new Date();
+const WD = "日月火水木金土";
+const reiwa = (d) => `令和${d.getFullYear() - 2018}年${d.getMonth() + 1}月${d.getDate()}日`;
+const md = (d) => `${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）`;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+$("today").textContent = `${reiwa(today)}（${WD[today.getDay()]}）　教務課`;
+
+/* ---------- タブ ---------- */
+function showTab(pid) {
+  document.querySelectorAll(".tab").forEach((x) => { const on = x.dataset.p === pid; x.setAttribute("aria-selected", on); $(x.dataset.p).hidden = !on; });
+  window.scrollTo({ top: 0 });
+  if (pid === "p4") fillExtSelects();
+  if (pid === "p5") { fillWho(); renderMine(); renderFree(); }
+}
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.p)));
+document.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.go)));
+
+/* ---------- 一括仕分け ---------- */
+const findName = (t) => (t.match(/氏名[：:]\s*([^\n]+)/) || [])[1]?.trim() || "";
+const URGENT = ["体調", "熱", "病院", "休み", "欠席", "辞め", "つらい", "しんどい", "悩", "眠れ", "至急", "締切", "トラブル"];
+$("urgentView").textContent = URGENT.join("、");
+let docs = [
+  { file: "サンプル_日報_佐藤.txt", text: "氏名：佐藤 花子\n今日やったこと：HTMLとCSSでポートフォリオのトップページを作った。\n学んだこと：flexboxで横並びにする方法が分かった。\n明日の目標：レスポンシブ対応を終わらせる。" },
+  { file: "サンプル_日報_鈴木.txt", text: "氏名：鈴木 一郎\n今日やったこと：あまり進まなかった。\n最近夜に眠れなくて、授業中も集中できない。正直つらいです。\n明日の目標：とりあえず来る。" },
+  { file: "サンプル_欠席届_田中.txt", text: "学籍番号：2405033\n氏名：田中 美咲\n欠席日：11月5日\n欠席理由：病院で検査を受けるため。午後から登校予定です。" },
+];
+function detectType(t) {
+  if (/欠席(日|理由)/.test(t)) return "欠席届";
+  if (/志望|貴社/.test(t)) return "志望理由書";
+  if (/今日|明日の目標|日報/.test(t)) return "日報";
+  return "その他";
+}
+function summarize(t) {
+  const body = t.split("\n").filter((l) => !/^(学籍番号|氏名|提出日)[：:]/.test(l)).join("。");
+  const s = body.split(/[。！？!?]/).map((x) => x.replace(/^[^：:]{1,8}[：:]/, "").trim()).filter((x) => x.length > 2);
+  return s.slice(0, 3);
+}
+function renderCards() {
+  let urgentCount = 0;
+  $("cards").innerHTML = docs.map((d) => {
+    const a = d.ai, hits = URGENT.filter((w) => d.text.includes(w));
+    const urgent = a ? a.condition !== "良好" : hits.length > 0;
+    if (urgent) urgentCount++;
+    const sum = a ? a.summary : summarize(d.text);
+    const chip = a
+      ? `<span class="chip ${a.condition === "要面談" ? "red" : a.condition === "注意" ? "amber" : "green"}">${esc(a.condition)}</span>`
+      : hits.length ? '<span class="chip red">要対応</span>' : '<span class="chip green">確認のみ</span>';
+    const why = a
+      ? (a.reason ? `<span class="reason">判断の理由：${esc(a.reason)}</span>` : "")
+      : hits.length ? `<span class="reason">判定理由：「${hits.map(esc).join("」「")}」を含む</span>` : "";
+    return `<article class="card${urgent ? " urgent" : ""}">
+      <div class="card-head">
+        ${chip}
+        <strong>${esc((a && a.name) || findName(d.text) || "提出者不明")}</strong>
+        <span class="chip amber">${esc((a && a.type) || detectType(d.text))}</span>
+        <span class="meta">${esc(d.file)}</span>
+        ${a ? '<span class="chip ai">分身が判断</span>' : ""}
+      </div>
+      <ol>${sum.map((x) => `<li>${esc(x)}</li>`).join("") || "<li>（本文がありません）</li>"}</ol>
+      ${why}
+      ${a && a.reply ? `<details><summary>声かけの下書き（${esc(persona().name)}さんの文体）</summary><pre>${esc(a.reply)}</pre></details>` : ""}
+    </article>`;
+  }).join("");
+  $("sortSummary").textContent = `${docs.length}件中 要対応 ${urgentCount}件`;
+}
+$("files").onchange = async (e) => {
+  for (const f of e.target.files) {
+    const buf = await f.arrayBuffer();
+    let text = new TextDecoder("utf-8").decode(buf);
+    if (text.includes(String.fromCharCode(0xfffd))) text = new TextDecoder("shift_jis").decode(buf);
+    docs.unshift({ file: f.name, text });
+  }
+  e.target.value = "";
+  renderCards();
+};
+$("clearFiles").onclick = () => { docs = []; renderCards(); };
+renderCards();
+
+/* ---------- 学期予定 ---------- */
+const HOLIDAYS = {
+  "2026-04-29": "昭和の日", "2026-05-03": "憲法記念日", "2026-05-04": "みどりの日", "2026-05-05": "こどもの日", "2026-05-06": "振替休日",
+  "2026-07-20": "海の日", "2026-08-11": "山の日", "2026-09-21": "敬老の日", "2026-09-22": "国民の休日", "2026-09-23": "秋分の日",
+  "2026-10-12": "スポーツの日", "2026-11-03": "文化の日", "2026-11-23": "勤労感謝の日",
+  "2027-01-01": "元日", "2027-01-11": "成人の日", "2027-02-11": "建国記念の日", "2027-02-23": "天皇誕生日",
+  "2027-03-21": "春分の日", "2027-03-22": "振替休日",
+};
+const TERM_PRESETS = {
+  前期: { start: "2026-04-08", end: "2026-07-24", items: [
+    { kind: "event", from: "2026-04-08", to: "", name: "前期始業式" },
+    { kind: "off", from: "2026-05-01", to: "", name: "開校記念日" },
+    { kind: "event", from: "2026-06-12", to: "", name: "体育祭" },
+    { kind: "off", from: "2026-07-21", to: "2026-07-24", name: "前期定期試験" },
+  ] },
+  後期: { start: "2026-10-01", end: "2027-02-12", items: [
+    { kind: "event", from: "2026-10-01", to: "", name: "後期始業式" },
+    { kind: "off", from: "2026-11-13", to: "", name: "学園祭準備" },
+    { kind: "event", from: "2026-11-14", to: "", name: "学園祭" },
+    { kind: "off", from: "2026-12-26", to: "2027-01-07", name: "冬期休暇" },
+    { kind: "event", from: "2027-01-20", to: "", name: "企業説明会（午後）" },
+    { kind: "off", from: "2027-02-08", to: "2027-02-12", name: "後期定期試験" },
+  ] },
+};
+const KIND = { off: "休み", event: "行事", furi: "振替授業" };
+const pad = (n) => String(n).padStart(2, "0");
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fromYmd = (s) => { const [y, m, d] = String(s).split("-").map(Number); return new Date(y, m - 1, d); };
+const short = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+const toast = (id, msg) => { $(id).textContent = msg; };
+let termItems = [], termState = null;
+const itemEnd = (it) => (it.kind !== "furi" && it.to && it.to >= it.from ? it.to : it.from);
+
+function loadPreset() {
+  const p = TERM_PRESETS[$("termName").value];
+  $("termStart").value = p.start; $("termEnd").value = p.end;
+  termItems = p.items.map((x) => ({ wd: 1, ...x }));
+  renderItems(); buildTerm(); toast("termToast", "");
+}
+
+function renderItems() {
+  termItems.sort((a, b) => (a.from || "9").localeCompare(b.from || "9"));
+  $("termItems").innerHTML = termItems.length ? termItems.map((it, i) => `<div class="item k-${it.kind}">
+    <select id="ti-k-${i}" data-i="${i}" data-k="kind" aria-label="種類">${Object.entries(KIND).map(([k, v]) => `<option value="${k}"${k === it.kind ? " selected" : ""}>${v}</option>`).join("")}</select>
+    <input type="date" id="ti-f-${i}" data-i="${i}" data-k="from" value="${it.from}" aria-label="${it.kind === "furi" ? "日付" : "開始日"}">
+    ${it.kind === "furi"
+      ? `<select id="ti-w-${i}" data-i="${i}" data-k="wd" aria-label="時間割の曜日">${[1, 2, 3, 4, 5].map((w) => `<option value="${w}"${w === it.wd ? " selected" : ""}>${WD[w]}曜の時間割</option>`).join("")}</select>`
+      : `<span class="tilde">〜</span><input type="date" id="ti-t-${i}" data-i="${i}" data-k="to" value="${it.to}" aria-label="終了日（1日だけなら空欄）">`}
+    <input id="ti-n-${i}" data-i="${i}" data-k="name" value="${esc(it.name)}" placeholder="名前" aria-label="名前">
+    <button type="button" class="x" data-rm="${i}" aria-label="${esc(it.name)}を削除">削除</button></div>`).join("")
+    : '<p class="meta" style="margin:0">まだありません。下のボタンで追加してください。</p>';
+}
+$("termItems").addEventListener("input", (e) => {
+  const el = e.target, i = +el.dataset.i, k = el.dataset.k;
+  if (!k || isNaN(i)) return;
+  const it = termItems[i];
+  if (k === "wd") it.wd = +el.value; else it[k] = el.value;
+  if (k === "kind") renderItems();
+  buildTerm();
+});
+$("termItems").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-rm]"); if (!b) return;
+  termItems.splice(+b.dataset.rm, 1); renderItems(); buildTerm();
+});
+document.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => {
+  termItems.push({ kind: b.dataset.add, from: "", to: "", name: KIND[b.dataset.add], wd: 1 });
+  renderItems();
+  $(`ti-f-${termItems.length - 1}`).focus();
+}));
+
+function buildTerm() {
+  const start = fromYmd($("termStart").value), end = fromYmd($("termEnd").value);
+  const target = Math.max(1, Math.floor(+$("target").value) || 15);
+  if (isNaN(start) || isNaN(end) || start > end) {
+    termState = null;
+    $("termWarn").innerHTML = "<li>授業開始日と最終日を確認してください。最終日が開始日より前になっています。</li>";
+    $("weekTable").innerHTML = ""; $("wdCounts").innerHTML = ""; $("termTotal").textContent = "";
+    return;
+  }
+  const off = new Map(Object.entries(HOLIDAYS).map(([k, v]) => [k, { name: v, holiday: true }]));
+  const events = new Map(), furi = new Map();
+  termItems.forEach((it, i) => {
+    if (!it.from) return;
+    if (it.kind === "furi") { furi.set(it.from, { wd: it.wd, i }); return; }
+    const a = fromYmd(it.from), b = fromYmd(itemEnd(it));
+    if (b - a > 400 * 864e5) return;
+    for (let d = a; d <= b; d = addDays(d, 1)) {
+      const k = ymd(d);
+      if (it.kind === "off") off.set(k, { name: it.name || "休み", i });
+      else events.set(k, [...(events.get(k) || []), it.name || "行事"]);
+    }
+  });
+
+  const count = [0, 0, 0, 0, 0, 0, 0], freeSats = [];
+  const cell = (cls, label, date, title) => `<td class="c ${cls}"><button type="button" class="cell" data-date="${date}" title="${esc(title)}">${label}</button></td>`;
+  let rows = "", week = 0, total = 0;
+  for (let mon = addDays(start, -((start.getDay() + 6) % 7)); mon <= end; mon = addDays(mon, 7)) {
+    let days = 0, cells = "", first = null, last = null;
+    const notes = [], offRanges = new Map();
+    for (let i = 0; i < 6; i++) {
+      const d = addDays(mon, i), key = ymd(d), wd = d.getDay();
+      if (d < start || d > end) { cells += '<td class="out">—</td>'; continue; }
+      first ??= d; last = d;
+      (events.get(key) || []).forEach((n) => notes.push(`${short(d)} ${esc(n)}`));
+      if (furi.has(key)) {
+        const w = furi.get(key).wd; count[w]++; days++;
+        cells += cell("furi", `${WD[w]}${count[w]}`, key, `${WD[w]}曜日の時間割で授業。押すと取り消します`);
+        notes.push(`${short(d)} 振替授業（${WD[w]}曜日の時間割）`);
+        continue;
+      }
+      if (off.has(key)) {
+        const o = off.get(key);
+        cells += wd === 6 ? '<td class="out">—</td>' : cell("off", o.holiday ? "祝" : "休", key, `${o.name}。押すと${o.holiday ? "この日に授業をします" : "授業日に戻します"}`);
+        const r = offRanges.get(o.name); offRanges.set(o.name, r ? [r[0], d] : [d, d]);
+        continue;
+      }
+      if (wd === 6) { if (!events.has(key)) freeSats.push(d); cells +=cell("sat", "＋", key, "押すと振替授業日にします"); continue; }
+      count[wd]++; days++;
+      cells += cell("", count[wd], key, `${WD[wd]}曜日 第${count[wd]}回。押すと休みにします`);
+    }
+    if (!first) continue;
+    week++; total += days;
+    for (const [n, [a, b]] of offRanges) notes.push(`${short(a)}${a < b ? "〜" + short(b) : ""} ${esc(n)}`);
+    rows += `<tr class="${days ? "" : "dim"}"><th>第${week}週</th><td class="left">${short(first)}〜${short(last)}</td>${cells}<td>${days}</td><td class="left">${notes.join("<br>")}</td></tr>`;
+  }
+  termState = { count, target, off, furi, freeSats, start, end };
+  $("weekTable").innerHTML = `<thead><tr><th>週</th><th>期間</th>${"月火水木金土".split("").map((d) => `<th>${d}</th>`).join("")}<th>授業日</th><th>行事・休み</th></tr></thead><tbody>${rows}</tbody>`;
+  $("termTotal").textContent = `（授業日 合計${total}日・${week}週）`;
+  $("wdCounts").innerHTML = [1, 2, 3, 4, 5].map((i) =>
+    `<div class="wd${count[i] < target ? " short" : ""}"><span>${WD[i]}曜</span><b>${count[i]}</b><span class="meta">目標 ${target}</span></div>`).join("");
+
+  const warns = [];
+  let shortTotal = 0;
+  [1, 2, 3, 4, 5].forEach((i) => {
+    if (count[i] < target) { shortTotal += target - count[i]; warns.push(`<li>${WD[i]}曜日が${count[i]}回で、目標まで${target - count[i]}回足りません。</li>`); }
+    else if (count[i] > target) warns.push(`<li class="ok">${WD[i]}曜日は${count[i]}回で、目標より${count[i] - target}回多いです。予備日や補講に使えます。</li>`);
+  });
+  if (!shortTotal) warns.unshift('<li class="ok">すべての曜日で目標回数に届いています。</li>');
+  $("termWarn").innerHTML = warns.join("");
+  $("autoFuri").disabled = !shortTotal;
+}
+
+function splitOff(i, key) {
+  const it = termItems[i], end = itemEnd(it);
+  const prev = ymd(addDays(fromYmd(key), -1)), next = ymd(addDays(fromYmd(key), 1));
+  termItems.splice(i, 1);
+  if (it.from < key) termItems.push({ ...it, to: prev === it.from ? "" : prev });
+  if (key < end) termItems.push({ ...it, from: next, to: next === end ? "" : end });
+}
+function mostShort() {
+  const { count, target } = termState;
+  return [1, 2, 3, 4, 5].reduce((best, w) => (target - count[w] > target - count[best] ? w : best), 1);
+}
+$("weekTable").onclick = (e) => {
+  const b = e.target.closest("button.cell"); if (!b || !termState) return;
+  const key = b.dataset.date, d = fromYmd(key), { off, furi } = termState;
+  let msg;
+  if (furi.has(key)) {
+    termItems.splice(furi.get(key).i, 1);
+    msg = `${short(d)}の振替授業を取り消しました。`;
+  } else if (d.getDay() === 6) {
+    const w = mostShort();
+    termItems.push({ kind: "furi", from: key, to: "", name: "振替授業", wd: w });
+    msg = `${short(d)}(土)を${WD[w]}曜日の振替授業日にしました。曜日は左の一覧で変えられます。`;
+  } else if (off.has(key)) {
+    const o = off.get(key);
+    if (o.holiday) {
+      termItems.push({ kind: "furi", from: key, to: "", name: `${o.name}（授業実施）`, wd: d.getDay() });
+      msg = `${short(d)}（${o.name}）に授業をすることにしました。`;
+    } else {
+      splitOff(o.i, key);
+      msg = `${short(d)}を授業日に戻しました。`;
+    }
+  } else {
+    termItems.push({ kind: "off", from: key, to: "", name: "臨時休業", wd: 1 });
+    msg = `${short(d)}を休みにしました。名前は左の一覧で変えられます。`;
+  }
+  renderItems(); buildTerm(); toast("termToast", msg);
+};
+$("autoFuri").onclick = () => {
+  if (!termState) return;
+  const { count, target, freeSats } = termState;
+  const ws = [1, 2, 3, 4, 5].flatMap((w) => Array(Math.max(0, target - count[w])).fill(w));
+  const n = Math.min(ws.length, freeSats.length);
+  // 使える土曜日から学期全体に散らばるように選ぶ
+  const picks = Array.from({ length: n }, (_, j) => freeSats[Math.floor(((j + 0.5) * freeSats.length) / n)]).sort((a, b) => a - b);
+  picks.forEach((d, j) => termItems.push({ kind: "furi", from: ymd(d), to: "", name: "振替授業", wd: ws[j] }));
+  renderItems(); buildTerm();
+  const left = ws.length - n;
+  toast("termToast", n ? `土曜日に振替授業を${n}日追加しました（${picks.map((d) => short(d)).join("、")}）。${left ? `まだ${left}回足りません。使える土曜日がもうありません。` : ""}` : "使える土曜日がありません。");
+};
+$("termName").onchange = loadPreset;
+["termStart", "termEnd", "target"].forEach((id) => $(id).addEventListener("input", buildTerm));
+loadPreset();
+
+/* ---------- 時間割 ---------- */
+const DAYS5 = ["月", "火", "水", "木", "金"];
+let teachers = [
+  { id: 1, name: "田中", kind: "in", avail: new Set() },
+  { id: 2, name: "佐藤", kind: "in", avail: new Set() },
+  { id: 3, name: "中村", kind: "in", avail: new Set() },
+  { id: 4, name: "鈴木", kind: "ext", avail: new Set(["1-0", "1-1", "1-2", "1-3", "3-0", "3-1", "3-2", "3-3"]) },
+  { id: 5, name: "高橋", kind: "ext", avail: new Set(["2-2", "2-3", "4-2", "4-3"]) },
+];
+let nextTid = 6, nextLid = 1;
+let lessons = [
+  { cls: "1年A", subj: "プログラミング基礎", tid: 1, count: 4, dbl: true },
+  { cls: "1年A", subj: "ネットワーク", tid: 4, count: 2, dbl: false },
+  { cls: "1年A", subj: "英語", tid: 2, count: 3, dbl: false },
+  { cls: "1年A", subj: "ビジネスマナー", tid: 3, count: 2, dbl: false },
+  { cls: "1年B", subj: "プログラミング基礎", tid: 1, count: 4, dbl: true },
+  { cls: "1年B", subj: "ネットワーク", tid: 4, count: 2, dbl: false },
+  { cls: "1年B", subj: "英語", tid: 2, count: 3, dbl: false },
+  { cls: "1年B", subj: "ビジネスマナー", tid: 3, count: 2, dbl: false },
+  { cls: "2年A", subj: "Webアプリ開発", tid: 1, count: 4, dbl: true },
+  { cls: "2年A", subj: "AI演習", tid: 5, count: 2, dbl: true },
+  { cls: "2年A", subj: "セキュリティ", tid: 4, count: 2, dbl: false },
+  { cls: "2年A", subj: "就職対策", tid: 3, count: 2, dbl: false },
+  { cls: "2年A", subj: "英語", tid: 2, count: 2, dbl: false },
+].map((l) => ({ ...l, lid: nextLid++ }));
+let tt = null, pins = [], sel = null, view = "class";
+const P = () => Math.max(1, Math.min(8, Math.floor(+$("periods").value) || 4));
+const classes = () => $("classesIn").value.split(/[、,，\s]+/).map((s) => s.trim()).filter(Boolean);
+const teacherOf = (id) => teachers.find((t) => t.id === id);
+const canTeach = (t, d, p) => t.kind === "in" || t.avail.has(`${d}-${p}`);
+const availCount = (t) => (t.kind === "ext" ? [...t.avail].filter((s) => +s.split("-")[1] < P()).length : 5 * P());
+const lessonGroups = () => { const cl = classes(); return [...cl, ...new Set(lessons.map((l) => l.cls).filter((c) => !cl.includes(c)))]; };
+const where = (x) => `${DAYS5[x.d]}曜${x.p + 1}限`;
+const markDirty = () => { if (tt) $("ttDirty").hidden = false; };
+
+function renderTeachers() {
+  const Pn = P();
+  $("teacherList").innerHTML = teachers.map((t) => {
+    let grid = "";
+    if (t.kind === "ext") {
+      grid = `<div class="avail" role="group" aria-label="${esc(t.name)}先生の来校できるコマ"><span></span>` +
+        DAYS5.map((d, di) => `<button type="button" class="ah" data-tid="${t.id}" data-day="${di}" title="${d}曜日をまとめて切り替え">${d}</button>`).join("") +
+        Array.from({ length: Pn }, (_, p) => `<button type="button" class="ah" data-tid="${t.id}" data-per="${p}" title="${p + 1}限をまとめて切り替え">${p + 1}限</button>` + DAYS5.map((_, d) => {
+          const on = t.avail.has(`${d}-${p}`);
+          return `<button type="button" id="av-${t.id}-${d}-${p}" data-tid="${t.id}" data-slot="${d}-${p}" aria-pressed="${on}" aria-label="${DAYS5[d]}曜${p + 1}限">${on ? "可" : "×"}</button>`;
+        }).join("")).join("") + "</div>";
+    }
+    return `<div class="teacher"><div class="card-head"><strong>${esc(t.name)}</strong>
+      <span class="chip ${t.kind === "ext" ? "amber" : "green"}">${t.kind === "ext" ? "外部講師" : "常勤"}</span>
+      <span class="meta" id="avn-${t.id}">${t.kind === "ext" ? `来校できるコマ ${availCount(t)}` : "いつでも可"}</span>
+      <button type="button" class="x" data-del="${t.id}" aria-label="${esc(t.name)}先生を削除">削除</button></div>${grid}</div>`;
+  }).join("");
+}
+$("teacherList").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.del) {
+    const id = +b.dataset.del;
+    teachers = teachers.filter((t) => t.id !== id);
+    lessons.forEach((l) => { if (l.tid === id) l.tid = null; });
+    renderTeachers(); renderLessons(); markDirty(); return;
+  }
+  const t = teacherOf(+b.dataset.tid); if (!t) return;
+  if (b.dataset.day !== undefined || b.dataset.per !== undefined) {
+    const slots = b.dataset.day !== undefined
+      ? Array.from({ length: P() }, (_, p) => `${b.dataset.day}-${p}`)
+      : DAYS5.map((_, d) => `${d}-${b.dataset.per}`);
+    const allOn = slots.every((s) => t.avail.has(s));
+    slots.forEach((s) => (allOn ? t.avail.delete(s) : t.avail.add(s)));
+    renderTeachers(); renderLoad(); markDirty();
+    document.querySelector(`#teacherList button[data-tid="${t.id}"][data-${b.dataset.day !== undefined ? "day" : "per"}="${b.dataset.day ?? b.dataset.per}"]`)?.focus();
+    return;
+  }
+  if (b.dataset.slot) {
+    const s = b.dataset.slot;
+    t.avail.has(s) ? t.avail.delete(s) : t.avail.add(s);
+    const on = t.avail.has(s);
+    b.setAttribute("aria-pressed", on); b.textContent = on ? "可" : "×";
+    $(`avn-${t.id}`).textContent = `来校できるコマ ${availCount(t)}`;
+    renderLoad(); markDirty();
+  }
+};
+$("addTeacher").onclick = () => {
+  const name = $("newTeacher").value.trim(); if (!name) { $("newTeacher").focus(); return; }
+  teachers.push({ id: nextTid++, name, kind: $("newKind").value, avail: new Set() });
+  $("newTeacher").value = "";
+  renderTeachers(); renderLessons();
+};
+
+function renderLessons() {
+  const cl = classes();
+  const tOpts = (sel) => '<option value="">（未設定）</option>' + teachers.map((t) => `<option value="${t.id}"${t.id === sel ? " selected" : ""}>${esc(t.name)}${t.kind === "ext" ? "（外部）" : ""}</option>`).join("");
+  const row = (l) => {
+    const i = lessons.indexOf(l);
+    return `<tr>
+      <td><input id="ls-s-${i}" data-i="${i}" data-k="subj" value="${esc(l.subj)}" placeholder="科目名" aria-label="科目"></td>
+      <td><select id="ls-t-${i}" data-i="${i}" data-k="tid" aria-label="先生">${tOpts(l.tid)}</select></td>
+      <td><input id="ls-n-${i}" type="number" min="1" max="10" data-i="${i}" data-k="count" value="${l.count}" aria-label="週コマ数" class="num"></td>
+      <td><input id="ls-d-${i}" type="checkbox" data-i="${i}" data-k="dbl"${l.dbl ? " checked" : ""} aria-label="2コマ連続" class="chk"></td>
+      <td><button type="button" class="x" data-rm="${i}" aria-label="この授業を削除">削除</button></td></tr>`;
+  };
+  $("lessonTable").innerHTML = "<thead><tr><th>科目</th><th>先生</th><th>週コマ</th><th>2コマ連続</th><th></th></tr></thead>" +
+    lessonGroups().map((c, gi) => `<tbody><tr class="grp"><th colspan="5">${esc(c)}${cl.includes(c) ? "" : "（クラス一覧にありません）"}<span class="meta" id="sub-${gi}"></span></th></tr>
+      ${lessons.filter((l) => l.cls === c).map(row).join("")}
+      <tr><td colspan="5" class="left"><button type="button" class="x" data-addto="${esc(c)}">＋ ${esc(c)}に授業を追加</button></td></tr></tbody>`).join("");
+  renderLoad();
+}
+function renderLoad() {
+  const cl = classes(), cap = 5 * P();
+  const counted = (l) => l.subj.trim() && teacherOf(l.tid) && cl.includes(l.cls);
+  lessonGroups().forEach((c, gi) => {
+    const el = $(`sub-${gi}`); if (!el) return;
+    const n = lessons.filter((l) => l.cls === c && counted(l)).reduce((s, l) => s + l.count, 0);
+    el.innerHTML = cl.includes(c) ? `週${n} / ${cap}コマ${n > cap ? ' <span class="chip red">多すぎ</span>' : ""}` : "";
+  });
+  $("teacherLoad").innerHTML = '<span class="meta">先生ごとの担当：</span>' + teachers.map((t) => {
+    const n = lessons.filter((l) => l.tid === t.id && counted(l)).reduce((s, l) => s + l.count, 0), c = availCount(t);
+    return `<span class="chip ${n > c ? "red" : t.kind === "ext" ? "amber" : "green"}">${esc(t.name)} ${n}${t.kind === "ext" ? ` / 来校可${c}` : ""}コマ</span>`;
+  }).join("");
+}
+$("lessonTable").addEventListener("input", (e) => {
+  const el = e.target, i = +el.dataset.i, k = el.dataset.k;
+  if (!k || isNaN(i)) return;
+  const l = lessons[i];
+  if (k === "dbl") l.dbl = el.checked;
+  else if (k === "count") l.count = Math.max(0, Math.floor(+el.value) || 0);
+  else if (k === "tid") l.tid = el.value ? +el.value : null;
+  else l[k] = el.value;
+  renderLoad(); markDirty();
+});
+$("lessonTable").addEventListener("click", (e) => {
+  const rm = e.target.closest("button[data-rm]");
+  if (rm) { lessons.splice(+rm.dataset.rm, 1); renderLessons(); markDirty(); return; }
+  const add = e.target.closest("button[data-addto]");
+  if (add) {
+    lessons.push({ cls: add.dataset.addto, subj: "", tid: null, count: 1, dbl: false, lid: nextLid++ });
+    renderLessons(); $(`ls-s-${lessons.length - 1}`).focus();
+  }
+});
+$("classesIn").onchange = () => { renderLessons(); markDirty(); };
+$("periods").onchange = () => { renderTeachers(); renderLoad(); markDirty(); };
+
+/* 固定した授業を先に置き、残りは外部講師の授業から順に、ランダム性のある貪欲法で何度も組んで、いちばん良い案を残す */
+function attempt(units, cl, Pn, fixed) {
+  const D = 5;
+  const grid = {}; cl.forEach((c) => (grid[c] = Array.from({ length: D }, () => Array(Pn).fill(null))));
+  const tBusy = new Map(teachers.map((t) => [t.id, Array.from({ length: D }, () => Array(Pn).fill(null))]));
+  const perDay = new Map();
+  const day = (lid) => { if (!perDay.has(lid)) perDay.set(lid, Array(D).fill(0)); return perDay.get(lid); };
+  fixed.forEach((f) => { grid[f.cls][f.d][f.p] = { r: f.r, t: f.t }; tBusy.get(f.t.id)[f.d][f.p] = f.cls; day(f.r.lid)[f.d]++; });
+  const order = units.map((u) => ({ u, key: u.opts - u.size * 2 - (u.t.kind === "ext" ? 6 : 0) + Math.random() * 3 }))
+    .sort((a, b) => a.key - b.key).map((x) => x.u);
+  const unplaced = [];
+  for (const u of order) {
+    const r = u.r, tb = tBusy.get(u.t.id), g = grid[r.cls], pd = day(r.lid);
+    const maxPerDay = r.dbl ? 2 : Math.max(1, Math.ceil(r.count / D));
+    let best = null, bestScore = -Infinity;
+    for (let d = 0; d < D; d++) {
+      if (pd[d] + u.size > maxPerDay) continue;
+      const comesThatDay = tb[d].some(Boolean);
+      for (let p = 0; p + u.size <= Pn; p++) {
+        let ok = true;
+        for (let k = 0; k < u.size; k++) { const q = p + k; if (g[d][q] || tb[d][q] || !canTeach(u.t, d, q)) { ok = false; break; } }
+        if (!ok) continue;
+        let s = Math.random() * 2 - p * 0.3 - g[d].filter(Boolean).length * 0.8;
+        if (u.t.kind === "ext") {
+          if (comesThatDay) s += 12;
+          if ((p > 0 && tb[d][p - 1]) || (p + u.size < Pn && tb[d][p + u.size])) s += 6;
+        }
+        if (s > bestScore) { bestScore = s; best = [d, p]; }
+      }
+    }
+    if (!best) { unplaced.push(u); continue; }
+    const [d, p] = best;
+    for (let k = 0; k < u.size; k++) { g[d][p + k] = { r, t: u.t }; tb[d][p + k] = r.cls; }
+    pd[d] += u.size;
+  }
+  let extDays = 0, extGaps = 0;
+  teachers.filter((t) => t.kind === "ext").forEach((t) => tBusy.get(t.id).forEach((dayRow) => {
+    const idx = dayRow.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+    if (idx.length) { extDays++; extGaps += idx[idx.length - 1] - idx[0] + 1 - idx.length; }
+  }));
+  return { grid, tBusy, unplaced, score: unplaced.reduce((s, u) => s + u.size, 0) * 1000 + extDays * 20 + extGaps * 5 };
+}
+
+function runSolve() {
+  const Pn = P(), cl = classes(), D = 5, warns = [];
+  const rows = lessons.filter((l) => l.subj.trim() && l.count > 0 && cl.includes(l.cls));
+  rows.filter((r) => !teacherOf(r.tid)).forEach((r) => warns.push(`<li>${esc(r.cls)} ${esc(r.subj)}：先生が決まっていないため、時間割に入れていません。</li>`));
+  const valid = rows.filter((r) => teacherOf(r.tid));
+  cl.forEach((c) => {
+    const n = valid.filter((r) => r.cls === c).reduce((s, r) => s + r.count, 0);
+    if (n > D * Pn) warns.push(`<li>${esc(c)}：授業が週${n}コマあり、時間割の枠（${D * Pn}コマ）を超えています。</li>`);
+  });
+  teachers.forEach((t) => {
+    const n = valid.filter((r) => r.tid === t.id).reduce((s, r) => s + r.count, 0), cap = availCount(t);
+    if (n > cap) warns.push(`<li>${esc(t.name)}先生：担当が週${n}コマありますが、${t.kind === "ext" ? "来校できる" : "授業に使える"}のは${cap}コマです。</li>`);
+  });
+
+  // 固定した授業のうち、今の条件でも置けるものだけ残す
+  const byLid = new Map(valid.map((r) => [r.lid, r]));
+  const used = new Set(), pinCount = new Map(), fixed = [];
+  let dropped = 0;
+  for (const pn of pins) {
+    const r = byLid.get(pn.lid), t = r && teacherOf(r.tid);
+    const ok = r && r.cls === pn.cls && pn.p < Pn && canTeach(t, pn.d, pn.p) &&
+      !used.has(`c|${pn.cls}|${pn.d}|${pn.p}`) && !used.has(`t|${t.id}|${pn.d}|${pn.p}`) && (pinCount.get(r.lid) || 0) < r.count;
+    if (!ok) { dropped++; continue; }
+    used.add(`c|${pn.cls}|${pn.d}|${pn.p}`); used.add(`t|${t.id}|${pn.d}|${pn.p}`);
+    pinCount.set(r.lid, (pinCount.get(r.lid) || 0) + 1);
+    fixed.push({ ...pn, r, t });
+  }
+  pins = fixed.map(({ lid, cls, d, p }) => ({ lid, cls, d, p }));
+  if (dropped) warns.push(`<li>条件が変わったため、固定していた授業のうち${dropped}コマの固定を外しました。</li>`);
+
+  const units = [];
+  valid.forEach((r) => {
+    const t = teacherOf(r.tid), rest = r.count - (pinCount.get(r.lid) || 0);
+    const pairs = r.dbl ? Math.floor(rest / 2) : 0;
+    for (let k = 0; k < pairs; k++) units.push({ r, t, size: 2 });
+    for (let k = 0; k < rest - pairs * 2; k++) units.push({ r, t, size: 1 });
+  });
+  units.forEach((u) => {
+    let n = 0;
+    for (let d = 0; d < D; d++) for (let p = 0; p + u.size <= Pn; p++) {
+      let ok = true; for (let k = 0; k < u.size; k++) if (!canTeach(u.t, d, p + k)) ok = false;
+      if (ok) n++;
+    }
+    u.opts = n;
+  });
+  let best = null;
+  for (let a = 0; a < 400; a++) { const res = attempt(units, cl, Pn, fixed); if (!best || res.score < best.score) best = res; }
+
+  const miss = new Map();
+  best.unplaced.forEach((u) => miss.set(u.r.lid, (miss.get(u.r.lid) || 0) + u.size));
+  for (const [lid, n] of miss) {
+    const r = byLid.get(lid), t = teacherOf(r.tid);
+    warns.push(`<li>${esc(r.cls)} ${esc(r.subj)}（${esc(t.name)}）が${n}コマ入りきりませんでした。<span class="why">${t.kind === "ext"
+      ? "来校できるコマを増やすか、同じ時間帯の他クラスの授業を減らしてください。"
+      : "同じ先生やクラスの授業と重なっています。コマ数や担当、固定を見直してください。"}</span></li>`);
+  }
+  if (!warns.length) warns.push('<li class="ok">すべての授業を時間割に入れました。</li>');
+  $("ttWarn").innerHTML = warns.join("");
+  tt = { grid: best.grid, tBusy: best.tBusy, Pn, cl };
+  sel = null;
+  $("ttDirty").hidden = true;
+  toast("ttToast", "");
+  renderTT();
+}
+
+function renderTT() {
+  if (!tt) return;
+  const { grid, tBusy, Pn, cl } = tt;
+  const exts = teachers.filter((t) => t.kind === "ext" && tBusy.has(t.id));
+  $("extSummary").innerHTML = exts.length
+    ? "<thead><tr><th>講師</th><th>来校日</th><th>来校日数</th><th>授業コマ</th><th>待ち時間</th></tr></thead><tbody>" + exts.map((t) => {
+      const days = tBusy.get(t.id).map((row, d) => ({ d, ps: row.map((v, p) => (v ? p : -1)).filter((p) => p >= 0), row })).filter((x) => x.ps.length);
+      const koma = days.reduce((s, x) => s + x.ps.length, 0);
+      const gaps = days.reduce((s, x) => s + x.ps[x.ps.length - 1] - x.ps[0] + 1 - x.ps.length, 0);
+      const visit = days.map((x) => `${DAYS5[x.d]}　${x.ps.map((p) => `${p + 1}限 ${esc(x.row[p])}`).join("・")}`).join("<br>") || "（授業なし）";
+      return `<tr><th>${esc(t.name)}</th><td class="left">${visit}</td><td>${days.length}日</td><td>${koma}コマ</td><td>${gaps ? `<span class="chip red">空き${gaps}コマ</span>` : '<span class="chip green">なし</span>'}</td></tr>`;
+    }).join("") + "</tbody>"
+    : "<tbody><tr><td>外部講師は登録されていません。</td></tr></tbody>";
+
+  const head = `<thead><tr><th></th>${DAYS5.map((d) => `<th>${d}</th>`).join("")}</tr></thead>`;
+  if (view === "class") {
+    $("timetables").innerHTML = cl.map((c) => {
+      const g = grid[c];
+      const n = g.flat().filter(Boolean).length;
+      const body = Array.from({ length: Pn }, (_, p) => `<tr><th>${p + 1}限</th>${DAYS5.map((_, d) => {
+        const s = g[d][p];
+        const isSel = sel && sel.cls === c && sel.d === d && sel.p === p;
+        const pinned = pins.some((pn) => pn.cls === c && pn.d === d && pn.p === p);
+        const cls = ["slot", s && s.t.kind === "ext" ? "ext" : "", s ? "" : "empty", isSel ? "sel" : "", pinned ? "pinned" : ""].filter(Boolean).join(" ");
+        return `<td class="${cls}"><button type="button" class="cell" data-cls="${esc(c)}" data-d="${d}" data-p="${p}" aria-pressed="${!!isSel}" aria-label="${esc(c)} ${where({ d, p })} ${s ? esc(s.r.subj) : "空き"}">${s
+          ? `${esc(s.r.subj)}<small>${esc(s.t.name)}${s.t.kind === "ext" ? "（外部）" : ""}</small>` : "—"}${pinned ? '<span class="pin">固定</span>' : ""}</button></td>`;
+      }).join("")}</tr>`).join("");
+      return `<div class="sheet"><h2>${esc(c)} <span class="meta">週${n}コマ</span></h2><div class="table-wrap"><table>${head}<tbody>${body}</tbody></table></div></div>`;
+    }).join("");
+  } else {
+    const tg = new Map(teachers.map((t) => [t.id, Array.from({ length: 5 }, () => Array(Pn).fill(null))]));
+    cl.forEach((c) => grid[c].forEach((row, d) => row.forEach((s, p) => { if (s && tg.has(s.t.id)) tg.get(s.t.id)[d][p] = { c, subj: s.r.subj }; })));
+    $("timetables").innerHTML = teachers.map((t) => {
+      const g = tg.get(t.id), n = g.flat().filter(Boolean).length;
+      const body = Array.from({ length: Pn }, (_, p) => `<tr><th>${p + 1}限</th>${DAYS5.map((_, d) => {
+        const s = g[d][p];
+        if (s) return `<td class="slot${t.kind === "ext" ? " ext" : ""}">${esc(s.c)}<small>${esc(s.subj)}</small></td>`;
+        return canTeach(t, d, p) ? '<td class="slot empty">—</td>' : '<td class="slot na">来校不可</td>';
+      }).join("")}</tr>`).join("");
+      return `<div class="sheet"><h2>${esc(t.name)}先生 <span class="meta">週${n}コマ${t.kind === "ext" ? "・外部講師" : ""}</span></h2><div class="table-wrap"><table>${head}<tbody>${body}</tbody></table></div></div>`;
+    }).join("");
+  }
+}
+
+function trySwap(a, b) {
+  const g = tt.grid[a.cls], A = g[a.d][a.p], B = g[b.d][b.p];
+  if (!A && !B) return "どちらも空きコマです。";
+  const check = (S, to) => {
+    if (!S) return "";
+    if (!canTeach(S.t, to.d, to.p)) return `${S.t.name}先生は${where(to)}に来校できません。`;
+    const busy = tt.tBusy.get(S.t.id)[to.d][to.p];
+    if (busy && busy !== a.cls) return `${S.t.name}先生は${where(to)}に${busy}の授業があります。`;
+    return "";
+  };
+  const err = check(A, b) || check(B, a);
+  if (err) return `入れ替えられません。${err}`;
+  const tb = (S) => tt.tBusy.get(S.t.id);
+  if (A) tb(A)[a.d][a.p] = null;
+  if (B) tb(B)[b.d][b.p] = null;
+  if (A) tb(A)[b.d][b.p] = a.cls;
+  if (B) tb(B)[a.d][a.p] = a.cls;
+  g[a.d][a.p] = B; g[b.d][b.p] = A;
+  pins = pins.filter((pn) => !(pn.cls === a.cls && ((pn.d === a.d && pn.p === a.p) || (pn.d === b.d && pn.p === b.p))));
+  if (A) pins.push({ lid: A.r.lid, cls: a.cls, d: b.d, p: b.p });
+  if (B) pins.push({ lid: B.r.lid, cls: a.cls, d: a.d, p: a.p });
+  return `${a.cls}：${A ? A.r.subj : "空き"}（${where(a)}）と ${B ? B.r.subj : "空き"}（${where(b)}）を入れ替えました。動かした授業は固定され、組み直しても残ります。`;
+}
+const focusCell = (c) => document.querySelector(`#timetables button.cell[data-cls="${CSS.escape(c.cls)}"][data-d="${c.d}"][data-p="${c.p}"]`)?.focus();
+$("timetables").onclick = (e) => {
+  const b = e.target.closest("button.cell"); if (!b || !tt) return;
+  const cur = { cls: b.dataset.cls, d: +b.dataset.d, p: +b.dataset.p };
+  if (!sel || sel.cls !== cur.cls) {
+    sel = cur; renderTT(); focusCell(cur);
+    toast("ttToast", `${cur.cls} ${where(cur)}を選びました。入れ替える先のマスを押してください（もう一度押すと取り消し）。`);
+    return;
+  }
+  if (sel.d === cur.d && sel.p === cur.p) { sel = null; renderTT(); focusCell(cur); toast("ttToast", ""); return; }
+  const msg = trySwap(sel, cur);
+  sel = null; renderTT(); focusCell(cur); toast("ttToast", msg);
+};
+$("unpin").onclick = () => { pins = []; renderTT(); toast("ttToast", "固定をすべて外しました。"); };
+document.querySelectorAll('input[name="ttView"]').forEach((r) => (r.onchange = () => { view = r.value; sel = null; renderTT(); toast("ttToast", ""); }));
+$("solveBtn").onclick = runSolve;
+renderTeachers();
+renderLessons();
+runSolve();
+
+/* ---------- 自分の空き日さがし ---------- */
+let lastFree = null;
+let myItems = [
+  { kind: "week", wd: 3, date: "", from: 3, to: 3, name: "学科会議" },
+  { kind: "date", wd: 1, date: "2026-11-10", from: "all", to: 0, name: "出張" },
+];
+$("ffrom").value = ymd(today);
+$("fto").value = ymd(addDays(today, 13));
+
+function fillWho() {
+  const cur = +$("fwho").value || 3;
+  $("fwho").innerHTML = teachers.map((t) => `<option value="${t.id}"${t.id === cur ? " selected" : ""}>${esc(t.name)}${t.kind === "ext" ? "（外部）" : ""}</option>`).join("");
+}
+
+function renderMine() {
+  const Pn = tt ? tt.Pn : P();
+  const pOpts = (v, withAll) => (withAll ? `<option value="all"${v === "all" ? " selected" : ""}>終日</option>` : "") +
+    Array.from({ length: Pn }, (_, p) => `<option value="${p}"${v === p ? " selected" : ""}>${p + 1}限</option>`).join("");
+  $("myItems").innerHTML = myItems.length ? myItems.map((it, i) => `<div class="item ${it.kind === "week" ? "k-event" : "k-off"}">
+    <span class="chip ${it.kind === "week" ? "green" : "red"}">${it.kind === "week" ? "毎週" : "日付"}</span>
+    ${it.kind === "week"
+      ? `<select id="my-w-${i}" data-i="${i}" data-k="wd" aria-label="曜日">${[1, 2, 3, 4, 5, 6].map((w) => `<option value="${w}"${w === it.wd ? " selected" : ""}>${WD[w]}曜</option>`).join("")}</select>`
+      : `<input type="date" id="my-d-${i}" data-i="${i}" data-k="date" value="${it.date}" aria-label="日付">`}
+    <select id="my-f-${i}" data-i="${i}" data-k="from" aria-label="開始の時限">${pOpts(it.from, true)}</select>
+    ${it.from === "all" ? "" : `<span class="tilde">〜</span><select id="my-t-${i}" data-i="${i}" data-k="to" aria-label="終了の時限">${pOpts(Math.max(it.from, it.to), false)}</select>`}
+    <input id="my-n-${i}" data-i="${i}" data-k="name" value="${esc(it.name)}" placeholder="予定の名前" aria-label="予定の名前">
+    <button type="button" class="x" data-rm="${i}" aria-label="${esc(it.name)}を削除">削除</button></div>`).join("")
+    : '<p class="meta" style="margin:0">授業以外の予定はありません。</p>';
+}
+$("myItems").addEventListener("input", (e) => {
+  const el = e.target, i = +el.dataset.i, k = el.dataset.k;
+  if (!k || isNaN(i)) return;
+  const it = myItems[i];
+  if (k === "from") { it.from = el.value === "all" ? "all" : +el.value; if (it.from !== "all" && it.to < it.from) it.to = it.from; renderMine(); }
+  else if (k === "wd" || k === "to") it[k] = +el.value;
+  else it[k] = el.value;
+  renderFree();
+});
+$("myItems").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-rm]"); if (!b) return;
+  myItems.splice(+b.dataset.rm, 1); renderMine(); renderFree();
+});
+document.querySelectorAll("[data-my]").forEach((b) => (b.onclick = () => {
+  myItems.push({ kind: b.dataset.my, wd: 1, date: ymd(today), from: 0, to: 0, name: "" });
+  renderMine(); renderFree();
+  $(`my-n-${myItems.length - 1}`).focus();
+}));
+
+const runs = (ps) => {
+  const out = [];
+  ps.forEach((p) => { const last = out[out.length - 1]; if (last && last[1] === p - 1) last[1] = p; else out.push([p, p]); });
+  return out;
+};
+const runLabel = ([a, b], Pn) => (a === 0 && b === Pn - 1 ? "終日" : a === b ? `${a + 1}限` : `${a + 1}〜${b + 1}限`);
+
+function renderFree() {
+  const t = teacherOf(+$("fwho").value);
+  if (!t || !tt || !termState) {
+    $("freeList").innerHTML = '<li class="msg">時間割と学期予定が用意できていません。「時間割」と「学期予定」のタブを確認してください。</li>';
+    $("freeCount").textContent = ""; $("freeText").value = ""; return;
+  }
+  const Pn = tt.Pn, half = Math.ceil(Pn / 2);
+  const amOpt = $("fwhen").options[1], pmOpt = $("fwhen").options[2];
+  amOpt.textContent = `午前（1〜${half}限）`; pmOpt.textContent = `午後（${half + 1}〜${Pn}限）`;
+  const when = $("fwhen").value, needV = $("fneed").value;
+  const [lo, hi] = when === "am" ? [0, half] : when === "pm" ? [half, Pn] : [0, Pn];
+  const need = needV === "all" ? hi - lo : Math.min(+needV, hi - lo);
+  const from = fromYmd($("ffrom").value), to = fromYmd($("fto").value);
+  if (isNaN(from) || isNaN(to) || from > to) {
+    $("freeList").innerHTML = '<li class="msg">期間を確認してください。終了日が開始日より前になっています。</li>';
+    $("freeCount").textContent = ""; $("freeText").value = ""; return;
+  }
+  const tb = tt.tBusy.get(t.id);
+  const lessonAt = (w, p) => {
+    if (!tb || !tb[w - 1][p]) return null;
+    const c = tb[w - 1][p], s = tt.grid[c]?.[w - 1][p];
+    return `${c} ${s ? s.r.subj : ""}`;
+  };
+  const termStart = fromYmd($("termStart").value), termEnd = fromYmd($("termEnd").value);
+  const mineAt = (d, key, p) => myItems.find((it) =>
+    (it.kind === "week" ? it.wd === d.getDay() : it.date === key) && (it.from === "all" || (p >= it.from && p <= Math.max(it.from, it.to))));
+
+  const hits = [];
+  let checked = 0;
+  for (let d = new Date(from), n = 0; d <= to && n < 200; d = addDays(d, 1), n++) {
+    const key = ymd(d), dow = d.getDay(), { off, furi } = termState;
+    if (dow === 0) continue;
+    if (HOLIDAYS[key] && !furi.has(key)) continue;
+    let w = null, note;
+    if (furi.has(key)) { w = furi.get(key).wd; note = `振替授業日（${WD[w]}曜の時間割）`; }
+    else if (dow === 6) { if (!$("fsat").checked) continue; note = "土曜日（授業なし）"; }
+    else if (d < termStart || d > termEnd) note = "学期外（授業なし）";
+    else if (off.has(key)) note = `授業なし（${off.get(key).name}）`;
+    else { w = dow; note = "授業日"; }
+    checked++;
+    const cells = Array.from({ length: Pn }, (_, p) => {
+      const l = w ? lessonAt(w, p) : null;
+      if (l) return { type: "l", label: l };
+      const m = mineAt(d, key, p);
+      if (m) return { type: "m", label: m.name || "自分の予定" };
+      return { type: p >= lo && p < hi ? "f" : "o", label: "空き" };
+    });
+    const freeIn = cells.map((c, p) => (c.type === "f" ? p : -1)).filter((p) => p >= 0);
+    const rs = runs(freeIn);
+    if (!rs.some(([a, b]) => b - a + 1 >= need)) continue;
+    hits.push({ d, note, cells, rs, noLesson: !w });
+  }
+
+  lastFree = { t, hits, need, Pn, from, to };
+  $("freeCount").textContent = `（${checked}日中 ${hits.length}日）`;
+  $("freeList").innerHTML = hits.length ? hits.map((h) => `<li class="${h.noLesson ? "nolesson" : ""}">
+      <span class="fd">${short(h.d)}(${WD[h.d.getDay()]})</span>
+      <span class="bar">${h.cells.map((c, p) => `<span class="${c.type}" title="${p + 1}限：${esc(c.label)}">${p + 1}</span>`).join("")}</span>
+      <span class="fx">${((x) => (x === "終日" ? "終日空き" : `${x}が空き`))(h.rs.filter(([a, b]) => b - a + 1 >= need).map((r) => runLabel(r, Pn)).join("・"))}<span class="why">${esc(h.note)}</span></span>
+    </li>`).join("")
+    : '<li class="msg">条件に合う日はありません。期間を広げるか、必要な空きを短くしてみてください。</li>';
+
+  $("freeText").value = hits.length
+    ? `${t.name}です。${short(from)}〜${short(to)}のうち、対応できる日時は以下のとおりです。\n\n` +
+      hits.map((h) => `・${md(h.d)}　${h.rs.filter(([a, b]) => b - a + 1 >= need).map((r) => runLabel(r, Pn)).join("、")}`).join("\n") +
+      "\n\nご都合のよい日時をお知らせください。"
+    : "";
+}
+["fwho", "fneed", "fwhen", "fsat", "ffrom", "fto"].forEach((id) => $(id).addEventListener("input", renderFree));
+$("copyFree").onclick = async () => {
+  try { await navigator.clipboard.writeText($("freeText").value); $("copiedFree").textContent = "コピーしました"; }
+  catch { $("freeText").select(); $("copiedFree").textContent = "選択しました。Ctrl+C でコピーしてください"; }
+};
+fillWho();
+renderMine();
+renderFree();
+
+/* ---------- 分身（ローカルの Ollama） ----------
+   役割分担：分身は「言葉を条件に直す」「先生の文体で書く」「書類を読む」だけ。
+   日付の計算・時間割の組み合わせ・空き日の検索はプログラムが行い、分身の結果は画面で確認してから反映する。 */
+const AI = { ok: false };
+let pendingTerm = [], pendingAvail = null, freeCtx = { partner: "", purpose: "" };
+
+function persona() {
+  return { name: $("meName").value.trim() || "教務の先生", team: $("meTeam").value.trim() || "教務課", style: $("meStyle").value.trim() };
+}
+const styleBlock = () => {
+  const p = persona();
+  return `# 先生（あなたが代わりに書く本人）\n名前：${p.name}\n所属：${p.team}\n\n# 先生の普段の文体の例\n最初の挨拶・名乗り・最後の締めと署名の形、言葉づかいだけを真似てください。例の中にある用件の文（書類の確認のお礼など）は、今回の用件と関係ないので書かないでください。\n---\n${p.style}\n---`;
+};
+const JA = "必ず自然な日本語だけで書き、中国語の漢字（簡体字）を混ぜないでください。";
+/* 一覧はプログラムが正確に作り、分身には差し込む位置だけを書かせる */
+function insertList(text, mark, list) {
+  const out = text.includes(mark) ? text.replace(mark, `\n${list}\n`) : `${text.trim()}\n\n${list}`;
+  return out.replace(/[ \t　]*\n[ \t　]*\n(\s*\n)+/g, "\n\n").trim();
+}
+const isoOk = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) && ymd(fromYmd(s)) === s;
+const dlabel = (s) => { const d = fromYmd(s); return `${short(d)}(${WD[d.getDay()]})`; };
+const S = (extra = {}) => ({ type: "string", ...extra });
+
+function setAI(ok, msg) {
+  AI.ok = ok;
+  $("aiStatus").className = `ai-status ${ok ? "on" : "off"}`;
+  $("aiStatus").textContent = msg;
+  document.querySelectorAll("[data-ai]").forEach((b) => {
+    b.disabled = !ok;
+    b.title = ok ? "" : "分身（Ollama）につながっていません。start.bat から開くと使えます。";
+  });
+}
+async function aiInit() {
+  try {
+    const r = await fetch("/api/tags", { cache: "no-store" });
+    if (!r.ok) throw new Error();
+    const models = ((await r.json()).models || []).map((m) => m.name);
+    if (!models.length) { setAI(false, "分身：モデルがありません（ollama pull qwen2.5:7b）"); return; }
+    const pref = models.find((m) => m.startsWith("qwen2.5:7b")) || models[0];
+    $("aiModel").innerHTML = models.map((m) => `<option${m === pref ? " selected" : ""}>${esc(m)}</option>`).join("");
+    setAI(true, `分身：接続中（${pref}・このPC内）`);
+  } catch {
+    $("aiModel").innerHTML = "<option>（未接続）</option>";
+    setAI(false, "分身：未接続（AIなしで動作中）");
+  }
+}
+$("aiModel").onchange = () => { if (AI.ok) setAI(true, `分身：接続中（${$("aiModel").value}・このPC内）`); };
+
+async function llm(system, user, schema) {
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: $("aiModel").value, stream: false, format: schema,
+      options: { temperature: schema ? 0 : 0.4 },
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.message) throw new Error(data.error || `分身が応答しませんでした（${res.status}）。`);
+  const text = data.message.content.trim();
+  if (!schema) return text;
+  try { return JSON.parse(text); } catch { throw new Error("分身の答えを読み取れませんでした。もう一度試してください。"); }
+}
+async function busy(btn, statusId, fn) {
+  const label = btn.textContent, st = $(statusId);
+  btn.disabled = true; btn.textContent = "分身が考えています…";
+  st.classList.remove("ng", "ok");
+  try { await fn(); }
+  catch (e) { st.classList.add("ng"); st.textContent = e.message || String(e); }
+  finally { btn.disabled = !AI.ok; btn.textContent = label; }
+}
+
+/* 分身が書いた文面の日付が、プログラムの計算結果にあるかを確かめる */
+function checkDates(text, allowed) {
+  const t = text.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/／/g, "/");
+  const found = new Set();
+  for (const m of t.matchAll(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/g)) found.add(`${+m[1]}/${+m[2]}`);
+  for (const m of t.matchAll(/(?<![\d/])(\d{1,2})\/(\d{1,2})(?![\d/])/g)) found.add(`${+m[1]}/${+m[2]}`);
+  return { found: found.size, bad: [...found].filter((x) => !allowed.has(x)) };
+}
+function showCheck(id, r, what) {
+  const el = $(id);
+  el.classList.remove("ok", "ng");
+  el.classList.add(r.bad.length ? "ng" : "ok");
+  el.textContent = r.bad.length
+    ? `${what}にない日付が入っています：${r.bad.join("、")}。送る前に直してください。`
+    : r.found ? `文面の日付（${r.found}件）は、すべて${what}と一致しています。` : "文面に日付は入っていません。";
+}
+
+/* 月曜日の日付で「◯月第n週」を決める（プログラム側で計算して分身に渡す） */
+function weekTable(from, to) {
+  const weeks = [];
+  for (let mon = addDays(from, -((from.getDay() + 6) % 7)); mon <= to; mon = addDays(mon, 7)) {
+    weeks.push({ label: `${mon.getMonth() + 1}月第${Math.ceil(mon.getDate() / 7)}週`, mon });
+  }
+  return weeks;
+}
+function monthWeeks(from, to, labels = []) {
+  return weekTable(from, to).map((w, i) =>
+    `${labels[i] ? `${labels[i]}（${w.label}）` : w.label}：${ymd(w.mon)}(月)〜${ymd(addDays(w.mon, 5))}(土)`).join("\n");
+}
+
+/* ----- 一括仕分け：分身が読む ----- */
+const SORT_SCHEMA = {
+  type: "object",
+  properties: {
+    name: S(), type: S({ enum: ["日報", "志望理由書", "欠席届", "その他"] }),
+    summary: { type: "array", items: S() },
+    condition: S({ enum: ["良好", "注意", "要面談"] }), reason: S(), reply: S(),
+  },
+  required: ["name", "type", "summary", "condition", "reason", "reply"],
+};
+$("aiSort").onclick = (e) => busy(e.currentTarget, "aiSortStatus", async () => {
+  if (!docs.length) { toast("aiSortStatus", "読む書類がありません。ファイルを選んでください。"); return; }
+  const list = [...docs];
+  for (let i = 0; i < list.length; i++) {
+    toast("aiSortStatus", `${i + 1} / ${list.length}件目を読んでいます…（${list[i].file}）`);
+    const a = await llm(
+      `あなたは学校の教務アシスタントです。学生の提出書類を読み、指定のJSONだけを返します。
+- name: 本文から分かる提出者の氏名。分からなければ ""
+- type: 書類の種類
+- summary: 内容の要約を、ちょうど3つの短い文で
+- condition: 学生の様子。問題がなければ "良好"、少し気になる点があれば "注意"、体調や心の不調、学校をやめる気配など、先生が早めに話を聞くべきなら "要面談"
+- reason: condition をそう判断した理由を1文で。本文の表現を根拠にする
+- reply: condition が "注意" か "要面談" のときだけ、先生の文体で学生への短い声かけ（3〜4文）。"良好" なら ""
+${JA}`,
+      `${styleBlock()}\n\n# 提出書類（${list[i].file}）\n${list[i].text.slice(0, 4000)}`, SORT_SCHEMA);
+    a.summary = (a.summary || []).filter(Boolean).slice(0, 3);
+    list[i].ai = a;
+    renderCards();
+  }
+  toast("aiSortStatus", `${list.length}件を分身が読みました。判断の理由と声かけの下書きを確認してください。`);
+});
+
+/* ----- 学期予定：話し言葉 → 休み・行事・振替 ----- */
+$("termNLBtn").onclick = (e) => busy(e.currentTarget, "termNLStatus", async () => {
+  const text = $("termNL").value.trim();
+  if (!text) { toast("termNLStatus", "読み取る文章を入れてください。"); return; }
+  const start = fromYmd($("termStart").value), end = fromYmd($("termEnd").value);
+  // 「◯月第n週」は分身に週の名前を選ばせ、日付への換算はプログラムで行う
+  const weeks = weekTable(addDays(start, -7), addDays(end, 7));
+  const schema = {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            kind: S({ enum: ["off", "event", "furi"] }), week: S({ enum: [...weeks.map((w) => w.label), ""] }),
+            from: S(), to: S(), name: S(), wd: S({ enum: ["月", "火", "水", "木", "金", ""] }),
+          },
+          required: ["kind", "week", "from", "to", "name", "wd"],
+        },
+      },
+    },
+    required: ["items"],
+  };
+  const out = await llm(
+    `あなたは学校の教務アシスタントです。先生の文章から、学期予定に入れる「休み」「行事」「振替授業」を読み取り、指定のJSONだけを返します。
+- kind: 授業がなくなる日は "off"（休暇・定期試験・試験期間・休校など。試験は必ず "off"）。授業はある行事は "event"。別の曜日の時間割で授業をする日は "furi"
+- week: 「2月の第2週」のように週で書かれていたら、その週の名前（例 "2月第2週"）を入れ、from と to は "" にする。それ以外は ""
+- from / to: 日付で書かれていたら、文章の月日をそのまま「月/日」の形で写す（例 "12/21"）。年は書かない。1日だけなら to は ""
+- wd: kind が "furi" のときだけ、その日に使う時間割の曜日（月〜金）。それ以外は ""
+- name: 短い予定の名前（例：冬期休暇、後期定期試験、振替授業）。文章をそのまま写さない
+- 1つの予定は1件にまとめる。文章に書かれていない予定は作らない
+例：「8/10から8/16は夏休み」→ {"kind":"off","week":"","from":"8/10","to":"8/16","name":"夏休み","wd":""}
+例：「7月の第3週は前期試験」→ {"kind":"off","week":"7月第3週","from":"","to":"","name":"前期試験","wd":""}`,
+    `# 先生の文章\n${text}`,
+    schema);
+  // 「月/日」の年は学期の期間からプログラムが決める
+  const toIso = (s) => {
+    const m = String(s || "").replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).match(/^(\d{1,2})\s*[/月]\s*(\d{1,2})日?$/);
+    if (!m) return isoOk(s) ? s : "";
+    const y = +m[1] >= start.getMonth() + 1 ? start.getFullYear() : start.getFullYear() + 1;
+    return ymd(new Date(y, +m[1] - 1, +m[2]));
+  };
+  const items = (out.items || []).map((it) => {
+    const w = it.week && weeks.find((x) => x.label === it.week);
+    return w ? { ...it, from: ymd(w.mon), to: ymd(addDays(w.mon, 4)) } : { ...it, from: toIso(it.from), to: toIso(it.to) };
+  })
+    .filter((it) => KIND[it.kind] && isoOk(it.from) && (!it.to || (isoOk(it.to) && it.to >= it.from)))
+    .map((it) => ({ kind: it.kind, from: it.from, to: it.kind === "furi" || it.to === it.from ? "" : it.to, name: it.name || KIND[it.kind], wd: Math.max(1, WD.indexOf(it.wd)) }))
+    .sort((a, b) => a.from.localeCompare(b.from));
+  // 同じ名前で日付がつながっている予定は1件にまとめる
+  pendingTerm = [];
+  for (const it of items) {
+    const last = pendingTerm[pendingTerm.length - 1];
+    if (last && last.kind === it.kind && it.kind !== "furi" && last.name === it.name && it.from <= ymd(addDays(fromYmd(itemEnd(last)), 1))) {
+      const end2 = itemEnd(it) > itemEnd(last) ? itemEnd(it) : itemEnd(last);
+      last.to = end2 === last.from ? "" : end2;
+    } else pendingTerm.push(it);
+  }
+  $("termNLPreview").innerHTML = pendingTerm.length
+    ? `<ul class="preview">${pendingTerm.map((it) => `<li><span class="chip ${it.kind === "off" ? "red" : it.kind === "event" ? "green" : "amber"}">${KIND[it.kind]}</span> ${dlabel(it.from)}${it.to ? "〜" + dlabel(it.to) : ""}　${esc(it.name)}${it.kind === "furi" ? `（${WD[it.wd]}曜の時間割）` : ""}</li>`).join("")}</ul>
+       <div class="row"><button class="btn" id="termNLAdd">この内容で追加</button><button class="btn ghost" id="termNLCancel">やめる</button></div>`
+    : "";
+  toast("termNLStatus", pendingTerm.length ? `${pendingTerm.length}件読み取りました。日付を確認して「この内容で追加」を押してください。` : "予定を読み取れませんでした。日付と名前が分かるように書き直してください。");
+});
+$("termNLPreview").onclick = (e) => {
+  if (e.target.id === "termNLAdd") {
+    termItems.push(...pendingTerm); renderItems(); buildTerm();
+    toast("termNLStatus", `${pendingTerm.length}件追加しました。下の予定表に反映されています。`);
+    $("termNL").value = "";
+  } else if (e.target.id === "termNLCancel") toast("termNLStatus", "");
+  else return;
+  pendingTerm = []; $("termNLPreview").innerHTML = "";
+};
+
+/* ----- 学期予定：学生向けのお知らせ文 ----- */
+$("termNoticeBtn").onclick = (e) => busy(e.currentTarget, "termNoticeStatus", async () => {
+  const start = $("termStart").value, end = $("termEnd").value;
+  const items = termItems.filter((it) => it.from).sort((a, b) => a.from.localeCompare(b.from));
+  const hol = Object.entries(HOLIDAYS).filter(([k]) => k >= start && k <= end);
+  const lines = [
+    ...items.map((it) => [it.from, `・${dlabel(it.from)}${it.kind !== "furi" && it.to ? "〜" + dlabel(it.to) : ""}　${it.name}（${KIND[it.kind]}${it.kind === "furi" ? `：${WD[it.wd]}曜日の時間割で授業` : ""}）`]),
+    ...hol.map(([k, v]) => [k, `・${dlabel(k)}　${v}（祝日・授業なし）`]),
+  ].sort((a, b) => a[0].localeCompare(b[0])).map((x) => x[1]);
+  const draft = await llm(
+    `あなたは${persona().team}の担当者です。学生に配る「${$("termName").value}の学期予定のお知らせ」を書きます。見出し・短い本文・予定一覧・締めの一言の順で、学生に分かりやすい丁寧な文章にしてください。予定一覧は自分で書かず、一覧を載せる位置に {{予定一覧}} とだけを1行に書き、前後に空行を入れてください。本文では個別の日付に触れず、授業期間だけを書いてかまいません。${JA}お知らせの本文だけを出力してください。`,
+    `授業期間：${dlabel(start)}〜${dlabel(end)}\n予定の件数：${lines.length}件（主な予定：${items.slice(0, 5).map((it) => it.name).join("、")}）`);
+  const text = insertList(draft, "{{予定一覧}}", lines.join("\n"));
+  $("termNotice").value = text; $("termNotice").hidden = false;
+  const allowed = new Set([start, end, ...hol.map(([k]) => k), ...items.flatMap((it) => [it.from, it.to].filter(Boolean))].map((s) => { const d = fromYmd(s); return `${d.getMonth() + 1}/${d.getDate()}`; }));
+  showCheck("termNoticeStatus", checkDates(text, allowed), "学期予定");
+});
+
+/* ----- 時間割：講師からの連絡 → 来校できるコマ ----- */
+function fillExtSelects() {
+  const ext = teachers.filter((t) => t.kind === "ext");
+  ["availWho", "mailWho"].forEach((id) => {
+    const cur = +$(id).value;
+    $(id).innerHTML = ext.map((t) => `<option value="${t.id}"${t.id === cur ? " selected" : ""}>${esc(t.name)}先生</option>`).join("") || '<option value="">（外部講師がいません）</option>';
+  });
+}
+["availWho", "mailWho"].forEach((id) => $(id).addEventListener("focus", fillExtSelects));
+const AVAIL_SCHEMA = {
+  type: "object",
+  properties: {
+    slots: { type: "array", items: { type: "object", properties: { day: S({ enum: DAYS5 }), periods: { type: "array", items: { type: "integer" } } }, required: ["day", "periods"] } },
+    note: S(),
+  },
+  required: ["slots", "note"],
+};
+$("availNLBtn").onclick = (e) => busy(e.currentTarget, "availNLStatus", async () => {
+  const t = teacherOf(+$("availWho").value), text = $("availNL").value.trim();
+  if (!t) { toast("availNLStatus", "外部講師を選んでください。"); return; }
+  if (!text) { toast("availNLStatus", "講師からの連絡の内容を入れてください。"); return; }
+  const Pn = P(), half = Math.ceil(Pn / 2);
+  const out = await llm(
+    `あなたは学校の教務アシスタントです。外部講師からの連絡（メールや電話のメモ）を読み、毎週の時間割で来校できるコマを指定のJSONだけで返します。
+- 時間割は月〜金、1日${Pn}コマ（1〜${Pn}限）。午前＝1〜${half}限、午後＝${half + 1}〜${Pn}限、終日＝1〜${Pn}限
+- slots には来校できる曜日と時限だけを入れる。「無理」「不可」「難しい」と書かれた曜日や時限は入れない
+- 「第3週だけ難しい」「月に1回」など、毎週の時間割で表せない条件は note に短い日本語で書く。なければ ""`,
+    `講師：${t.name}先生\n\n# 連絡の内容\n${text}`, AVAIL_SCHEMA);
+  const slots = new Set();
+  (out.slots || []).forEach((s) => {
+    const d = DAYS5.indexOf(s.day);
+    if (d >= 0) (s.periods || []).forEach((p) => { if (Number.isInteger(p) && p >= 1 && p <= Pn) slots.add(`${d}-${p - 1}`); });
+  });
+  pendingAvail = { tid: t.id, slots, note: (out.note || "").trim() };
+  const byDay = DAYS5.map((dn, d) => {
+    const ps = [...slots].filter((s) => +s.split("-")[0] === d).map((s) => +s.split("-")[1]).sort((a, b) => a - b);
+    return ps.length ? `${dn}曜：${runs(ps).map((r) => runLabel(r, Pn)).join("・")}` : "";
+  }).filter(Boolean);
+  $("availNLPreview").innerHTML = `<ul class="preview">${byDay.map((x) => `<li>${esc(x)}</li>`).join("") || "<li>来校できるコマは読み取れませんでした。</li>"}${pendingAvail.note ? `<li class="note">毎週の表で表せない条件：${esc(pendingAvail.note)}</li>` : ""}</ul>` +
+    (slots.size ? '<div class="row"><button class="btn" id="availNLApply">この内容に置き換える</button><button class="btn ghost" id="availNLAdd">今の設定に追加</button><button class="btn ghost" id="availNLCancel">やめる</button></div>' : "");
+  toast("availNLStatus", slots.size ? `${t.name}先生の来校できるコマを読み取りました。確認して反映してください。` : "来校できるコマを読み取れませんでした。");
+});
+$("availNLPreview").onclick = (e) => {
+  const id = e.target.id;
+  if (!["availNLApply", "availNLAdd", "availNLCancel"].includes(id)) return;
+  const t = pendingAvail && teacherOf(pendingAvail.tid);
+  if (id !== "availNLCancel" && t) {
+    if (id === "availNLApply") t.avail = new Set(pendingAvail.slots); else pendingAvail.slots.forEach((s) => t.avail.add(s));
+    renderTeachers(); renderLoad(); markDirty();
+    toast("availNLStatus", `${t.name}先生の来校できるコマを${id === "availNLApply" ? "置き換え" : "追加し"}ました。上の表で確認し、「時間割を組む」を押してください。`);
+  } else toast("availNLStatus", "");
+  pendingAvail = null; $("availNLPreview").innerHTML = "";
+};
+
+/* ----- 時間割：外部講師への連絡文 ----- */
+$("mailBtn").onclick = (e) => busy(e.currentTarget, "mailStatus", async () => {
+  const t = teacherOf(+$("mailWho").value);
+  if (!t || !tt) { toast("mailStatus", "外部講師を選び、先に時間割を組んでください。"); return; }
+  const rows = [];
+  tt.cl.forEach((c) => tt.grid[c].forEach((row, d) => row.forEach((s, p) => { if (s && s.t.id === t.id) rows.push({ d, p, c, subj: s.r.subj }); })));
+  rows.sort((a, b) => a.d - b.d || a.p - b.p);
+  if (!rows.length) { toast("mailStatus", `${t.name}先生の授業は、今の時間割に入っていません。`); return; }
+  const list = rows.map((x) => `・${DAYS5[x.d]}曜日 ${x.p + 1}限　${x.c}「${x.subj}」`).join("\n");
+  const days = [...new Set(rows.map((r) => DAYS5[r.d]))];
+  const draft = await llm(
+    `あなたは下の先生本人として、外部講師の${t.name}先生に送るメールを書きます。用件：${$("mailKind").value}。外部の方なので丁寧な敬語で書き、宛名は「${t.name}先生」とします。担当コマの一覧は自分で書かず、一覧を載せる位置に {{担当コマ}} とだけを1行に書き、前後に空行を入れてください。本文で曜日や時限を個別に挙げないでください。先生の文体の例は挨拶と締め方だけを参考にしてください。${JA}件名とメール本文だけを出力してください。`,
+    `${styleBlock()}\n\n# 時間割の概要\n${t.name}先生の担当：週${rows.length}コマ、来校は毎週${days.join("・")}曜日の${days.length}日`);
+  const text = insertList(draft, "{{担当コマ}}", list);
+  $("extMail").value = text; $("extMail").hidden = false;
+  const missing = rows.filter((x) => !new RegExp(`${DAYS5[x.d]}曜?日?[^\\n]{0,8}?${x.p + 1}\\s*限`).test(text));
+  const st = $("mailStatus");
+  st.classList.remove("ok", "ng"); st.classList.add(missing.length ? "ng" : "ok");
+  st.textContent = missing.length
+    ? `時間割にある次のコマが文面に見当たりません：${missing.map((x) => `${DAYS5[x.d]}曜${x.p + 1}限`).join("、")}。送る前に直してください。`
+    : `担当コマ（${rows.length}件）は、すべて文面に載っています。`;
+});
+
+/* ----- 空き日さがし：話し言葉 → 条件 ----- */
+const FREE_SCHEMA = {
+  type: "object",
+  properties: {
+    from: S(), to: S(), need: S({ enum: ["1", "2", "3", "all"] }), when: S({ enum: ["any", "am", "pm"] }),
+    sat: { type: "boolean" }, partner: S(), purpose: S(),
+  },
+  required: ["from", "to", "need", "when", "sat", "partner", "purpose"],
+};
+$("freeNLBtn").onclick = (e) => busy(e.currentTarget, "freeNLStatus", async () => {
+  const text = $("freeNL").value.trim();
+  if (!text) { toast("freeNLStatus", "頼みたいことを入れてください。"); return; }
+  const out = await llm(
+    `あなたは先生の日程調整アシスタントです。先生の依頼文から、空き日を探す条件を指定のJSONだけで返します。
+- from / to: 探す期間（YYYY-MM-DD）。下の週の一覧と今日の日付から決める。「来週」は来週の月曜〜土曜。期間の指定がなければ今日から2週間
+- need: 必要な連続コマ数 "1"・"2"・"3"。「午後まるごと」「1日」など時間帯全部なら "all"。1時間以内の用事は "1"
+- when: 午前なら "am"、午後なら "pm"、指定がなければ "any"
+- sat: 土曜日も候補に入れてよいと書かれていれば true、それ以外は false
+- partner: 相手（例：山田さん、保護者）。なければ ""
+- purpose: 用件（例：進路面談）。なければ ""`,
+    `今日：${ymd(today)}(${WD[today.getDay()]})\n\n# 週の一覧\n${monthWeeks(today, addDays(today, 56), ["今週", "来週", "再来週"])}\n\n# 先生の依頼\n${text}`,
+    FREE_SCHEMA);
+  const okRange = isoOk(out.from) && isoOk(out.to) && out.from <= out.to && fromYmd(out.to) - fromYmd(out.from) <= 120 * 864e5;
+  if (okRange) { $("ffrom").value = out.from; $("fto").value = out.to; }
+  if (["1", "2", "3", "all"].includes(out.need)) $("fneed").value = out.need;
+  if (["any", "am", "pm"].includes(out.when)) $("fwhen").value = out.when;
+  $("fsat").checked = !!out.sat;
+  freeCtx = { partner: (out.partner || "").trim(), purpose: (out.purpose || "").trim() };
+  renderFree();
+  toast("freeNLStatus", `読み取った条件：${dlabel($("ffrom").value)}〜${dlabel($("fto").value)}・${$("fneed").selectedOptions[0].text}・${$("fwhen").selectedOptions[0].text}` +
+    `${freeCtx.partner ? `／相手：${freeCtx.partner}` : ""}${freeCtx.purpose ? `／用件：${freeCtx.purpose}` : ""}。${okRange ? "" : "期間は読み取れなかったので、今の設定のままです。"}条件は下のフォームで直せます。`);
+});
+
+/* ----- 空き日さがし：先生の文体で日程候補の文面 ----- */
+$("freeWriteBtn").onclick = (e) => busy(e.currentTarget, "freeCheck", async () => {
+  if (!lastFree || !lastFree.hits.length) { toast("freeCheck", "候補の日がありません。条件を変えてください。"); return; }
+  const { t, hits, need, Pn } = lastFree;
+  const cands = hits.map((h) => `・${md(h.d)}　${h.rs.filter(([a, b]) => b - a + 1 >= need).map((r) => runLabel(r, Pn)).join("、")}`).join("\n");
+  const draft = await llm(
+    `あなたは下の先生本人として、${freeCtx.partner || "相手"}に日程の候補を伝える文面を書きます。${freeCtx.purpose ? `用件は「${freeCtx.purpose}」です。` : ""}候補の日時は自分で書かず、候補の一覧を載せる位置に {{候補}} とだけを1行に書き、前後に空行を入れてください。本文で日付や時限に触れないでください。先生の文体の例の口調・挨拶・締め方を真似てください。${JA}文面だけを出力してください。`,
+    `${styleBlock()}\n\n# 状況\n候補は${hits.length}件あります。`);
+  const text = insertList(draft, "{{候補}}", cands);
+  $("freeText").value = text;
+  showCheck("freeCheck", checkDates(text, new Set(hits.map((h) => `${h.d.getMonth() + 1}/${h.d.getDate()}`))), "空き日の候補");
+});
+
+fillExtSelects();
+aiInit();
+
+/* ---------- 音声入力（Whisper・このPC内） ----------
+   ブラウザで録音した音声を server.py の Whisper で文字にする。録音はどこにも保存しない。 */
+const VOICE = { ok: false, rec: null, btn: null, chunks: [] };
+const MIC_NEXT = { termNL: "termNLBtn", availNL: "availNLBtn", freeNL: "freeNLBtn" };
+
+async function voiceInit() {
+  try {
+    const j = await (await fetch("/api/voice", { cache: "no-store" })).json();
+    VOICE.ok = !!j.ok && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  } catch { VOICE.ok = false; }
+  $("voiceStatus").className = `ai-status ${VOICE.ok ? "on" : "off"}`;
+  $("voiceStatus").textContent = VOICE.ok ? "音声：使えます（このPC内）" : "音声：使えません";
+  document.querySelectorAll("[data-mic]").forEach((b) => {
+    b.disabled = !VOICE.ok;
+    b.title = VOICE.ok ? "押して話し、話し終わったらもう一度押します" : "音声認識が使えません。start.bat から開き、faster-whisper を入れてください。";
+  });
+}
+
+/* 学校でよく使う言葉と、先生・クラス・学生の名前をヒントとして渡し、聞きまちがいを減らす */
+const VOICE_WORDS = "進路面談、三者面談、午前、午後、1限、2限、2コマ、時間割、振替授業、外部講師、定期試験、冬期休暇、学園祭、日報、欠席";
+function voiceHint() {
+  const names = [persona().name, ...teachers.map((t) => `${t.name}先生`), ...classes(), ...docs.map((d) => findName(d.text))].filter(Boolean);
+  return `学校の教務の連絡です。${VOICE_WORDS}。${[...new Set(names)].join("、")}。`;
+}
+
+async function toggleMic(btn) {
+  if (VOICE.rec) { if (VOICE.btn === btn) VOICE.rec.stop(); return; }
+  const st = $(btn.dataset.status);
+  st.classList.remove("ng", "ok");
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) {
+    st.classList.add("ng");
+    st.textContent = e.name === "NotFoundError" || e.name === "OverconstrainedError"
+      ? "マイクが見つかりません。PCにマイク（ヘッドセット、USBマイク、マイク付きWebカメラなど）をつないでから、もう一度押してください。"
+      : e.name === "NotAllowedError" || e.name === "SecurityError"
+        ? "マイクの使用が許可されていません。アドレスバー左のアイコンからマイクを「許可」にして、ページを再読み込みしてください。"
+        : e.name === "NotReadableError"
+          ? "マイクをほかのアプリ（Teams や Zoom など）が使っています。そのアプリを閉じてから、もう一度押してください。"
+          : `マイクを使えませんでした（${e.name}）。`;
+    return;
+  }
+  const rec = new MediaRecorder(stream), label = btn.textContent;
+  Object.assign(VOICE, { rec, btn, chunks: [] });
+  rec.ondataavailable = (e) => { if (e.data.size) VOICE.chunks.push(e.data); };
+  rec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const blob = new Blob(VOICE.chunks, { type: rec.mimeType });
+    Object.assign(VOICE, { rec: null, btn: null, chunks: [] });
+    btn.classList.remove("rec"); btn.textContent = "文字にしています…"; btn.disabled = true;
+    try {
+      const res = await fetch(`/api/transcribe?hint=${encodeURIComponent(voiceHint())}`, { method: "POST", body: blob });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || "音声を文字にできませんでした。");
+      if (!j.text) throw new Error("声を聞き取れませんでした。マイクに近づいて、もう一度話してください。");
+      voiceDone(btn, j.text);
+    } catch (e) { st.classList.add("ng"); st.textContent = e.message; }
+    finally { btn.textContent = label; btn.disabled = !VOICE.ok; }
+  };
+  rec.start();
+  btn.classList.add("rec"); btn.textContent = "● 録音中（押すと終了）";
+  toast(btn.dataset.status, "話し終わったら、もう一度ボタンを押してください。");
+}
+
+function voiceDone(btn, text) {
+  const target = btn.dataset.mic;
+  if (target === "memo") {
+    const time = new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+    docs.unshift({ file: `声のメモ（${time}）`, text });
+    renderCards();
+    toast(btn.dataset.status, `声のメモを一覧の先頭に追加しました。「分身で読む」で要約と様子の判断ができます。`);
+    return;
+  }
+  const ta = $(target);
+  ta.value = ta.value.trim() ? `${ta.value.trim()}\n${text}` : text;
+  toast(btn.dataset.status, `聞き取った内容：「${text}」`);
+  // 話しかけるだけで動くよう、続けて分身に読み取らせる（反映の前には確認画面が出る）
+  if (AI.ok && MIC_NEXT[target]) $(MIC_NEXT[target]).click();
+}
+
+document.querySelectorAll("[data-mic]").forEach((b) => (b.onclick = () => toggleMic(b)));
+voiceInit();
+</script>
+
+</body>
+</html>
