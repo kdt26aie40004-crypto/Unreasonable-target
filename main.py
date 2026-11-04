@@ -43,6 +43,7 @@ SAMPLE_RATE = 16000                  # Whisper が想定するサンプリング
 OUTPUT_DIR = "./my_powershell_tools"
 HISTORY_FILE = os.path.join(OUTPUT_DIR, "history.jsonl")
 CONFIRM_BEFORE_RUN = True            # 生成コードを実行前に確認する（False で即時実行）
+BROWSER = "chrome"                   # 作ったWebサイトを開くブラウザ（chrome / msedge / firefox）
 
 # --- パーソナルデータ（GitHubには上げない） ---
 DATA_DIR = "./data"
@@ -518,7 +519,10 @@ def run_with_powershell(lang, path, code):
         return
     print("[AI] PowerShellを起動して実行します...")
     if lang == "html":
-        command = ["powershell.exe", "-NoProfile", "-Command", f"Start-Process -FilePath {ps_quote(path)}"]
+        # 指定のブラウザで開く（見つからなければ既定のブラウザ）
+        script = (f"try {{ Start-Process -FilePath {ps_quote(BROWSER)} -ArgumentList {ps_quote(f'"{path}"')} -ErrorAction Stop }} "
+                  f"catch {{ Start-Process -FilePath {ps_quote(path)} }}")
+        command = ["powershell.exe", "-NoProfile", "-Command", script]
     else:
         command = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
                    "-NoExit", "-File", path]
