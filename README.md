@@ -28,6 +28,12 @@ python main.py
 
 Enterで録音開始 → 話す → Enterで録音終了。生成されたコードは `my_powershell_tools/` に保存されます。
 
+マイクがない場合は、キーボードで要望を入力する文字入力モードで起動できます。
+
+```
+python main.py --text
+```
+
 `main.py` 冒頭の設定:
 - `MODEL_NAME` — 使うローカルLLM
 - `WHISPER_MODEL` — 文字起こしの精度と速度（`small` が標準）

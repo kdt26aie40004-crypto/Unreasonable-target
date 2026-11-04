@@ -14,6 +14,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 
 import numpy as np
@@ -189,14 +190,20 @@ def run_with_powershell(lang, path, code):
 
 # ============================================================
 def main():
-    print("[AI] Whisper モデルを読み込み中...")
-    whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    # --text: マイクの代わりにキーボードで要望を入力する（Whisper を使わない）
+    text_mode = "--text" in sys.argv
+    if not text_mode:
+        print("[AI] Whisper モデルを読み込み中...")
+        whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
 
     while True:
-        audio = record_voice()
-        if audio is None:
-            continue
-        user_request = transcribe(whisper, audio)
+        if text_mode:
+            user_request = input("\n[AI] どんなツールを作りたいですか？ 文字で入力してください: ").strip()
+        else:
+            audio = record_voice()
+            if audio is None:
+                continue
+            user_request = transcribe(whisper, audio)
         if not user_request:
             continue
 
