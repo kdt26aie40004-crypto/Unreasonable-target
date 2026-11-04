@@ -4,6 +4,7 @@
 agent.py のエージェントをそのまま使い、この画面は入力・確認・設定・表示・見回りだけを担当する。
 """
 
+import json
 import os
 import queue
 import re
@@ -55,6 +56,22 @@ EXAMPLES = [
 MONITOR_MINUTES = 15  # 自分から見回る間隔
 OLLAMA_APP = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama app.exe")
 FONT_FAMILY = "Yu Gothic UI"
+SETTINGS_FILE = os.path.join("my_powershell_tools", "settings.json")
+DEFAULT_DEVICE = "Windowsの既定"
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_settings(**values):
+    settings = {**load_settings(), **values}
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False)
 
 ctk.set_appearance_mode("System")
 
@@ -181,7 +198,30 @@ class App:
         bottom = ctk.CTkFrame(side, fg_color="transparent")
         bottom.grid(row=9, column=0, padx=18, pady=18, sticky="ew")
         ctk.CTkSwitch(bottom, text="声で返事", variable=self.voice, font=self.font(13), text_color=TEXT,
-                      progress_color=ACCENT).pack(anchor="w", pady=(0, 12))
+                      progress_color=ACCENT).pack(anchor="w", pady=(0, 8))
+        # 声の出力先（聞こえないときに、聞こえるスピーカーを選べるように）
+        ctk.CTkLabel(bottom, text="声の出力先", font=self.font(11), text_color=MUTED).pack(anchor="w")
+        devices = {name: index for index, name in main.output_devices()}
+        saved = load_settings().get("voice_device")
+        if saved in devices:
+            main.VOICE_DEVICE = devices[saved]
+        voice_row = ctk.CTkFrame(bottom, fg_color="transparent")
+        voice_row.pack(fill="x", pady=(2, 12))
+
+        def choose(name):
+            main.VOICE_DEVICE = devices.get(name)
+            save_settings(voice_device=name)
+            main.speak("この声が聞こえれば大丈夫です。")
+        menu = ctk.CTkOptionMenu(voice_row, values=[DEFAULT_DEVICE] + list(devices), command=choose,
+                                 font=self.font(11), dropdown_font=self.font(12), width=150, height=28,
+                                 fg_color=SURFACE, text_color=TEXT, button_color=ACCENT,
+                                 button_hover_color=ACCENT_HOVER, dynamic_resizing=False)
+        menu.set(saved if saved in devices else DEFAULT_DEVICE)
+        menu.pack(side="left")
+        ctk.CTkButton(voice_row, text="🔈", width=34, height=28, corner_radius=14, font=self.font(13),
+                      fg_color=SURFACE, text_color=TEXT, hover_color=BORDER,
+                      command=lambda: main.speak("第二の自分の声のテストです。聞こえていますか。")).pack(
+            side="left", padx=(6, 0))
         ctk.CTkLabel(bottom, text="テーマ", font=self.font(11), text_color=MUTED).pack(anchor="w")
         theme = ctk.CTkSegmentedButton(bottom, values=["自動", "ライト", "ダーク"], font=self.font(12),
                                        selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,

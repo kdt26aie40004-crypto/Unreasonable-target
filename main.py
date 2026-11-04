@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -538,17 +539,60 @@ def speak_script(text):
             f"$s.Speak({ps_quote(text)})")
 
 
-_speaker = None
+VOICE_DEVICE = None                  # 声を出すスピーカー（output_devices() の番号。None は Windows の既定）
+_voice_turn = 0
 
 
-def speak(text):
-    """AIの返事を声で読み上げる（前の読み上げが続いていれば止めてから）"""
-    global _speaker
-    if _speaker and _speaker.poll() is None:
-        _speaker.terminate()
-    encoded = base64.b64encode(speak_script(text).encode("utf-16-le")).decode()
-    _speaker = subprocess.Popen(["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+def output_devices():
+    """声を出せるスピーカーの一覧 [(番号, 名前)]（同じ機器が重複しないよう WASAPI のものだけ）"""
+    wasapi = next((i for i, h in enumerate(sd.query_hostapis()) if "WASAPI" in h["name"]), None)
+    return [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+            if d["max_output_channels"] > 0 and d["hostapi"] == wasapi]
+
+
+def synthesize(text, path):
+    """Windows標準の音声合成で、読み上げた声を WAV ファイルにする"""
+    run_ps("Add-Type -AssemblyName System.Speech; "
+           "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+           "try { $s.SelectVoiceByHints('NotSet', 'NotSet', 0, [Globalization.CultureInfo]'ja-JP') } catch {}; "
+           f"$s.SetOutputToWaveFile({ps_quote(path)}); $s.Speak({ps_quote(text)}); $s.Dispose()", timeout=120)
+
+
+def play_wav(path, device=None):
+    """WAV ファイルを指定のスピーカーで再生する（スピーカーに合わせてサンプリングレートを変換）"""
+    import wave
+    with wave.open(path, "rb") as w:
+        rate, channels = w.getframerate(), w.getnchannels()
+        data = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype("float32") / 32768
+    data = data.reshape(-1, channels)
+    out_rate = int(sd.query_devices(device if device is not None else sd.default.device[1])["default_samplerate"])
+    if out_rate != rate:  # WASAPI は機器のサンプリングレートでしか再生できないため
+        x = np.linspace(0, len(data) - 1, int(len(data) * out_rate / rate))
+        data = np.stack([np.interp(x, np.arange(len(data)), data[:, c]) for c in range(channels)], axis=1)
+    sd.play(data.astype("float32"), out_rate, device=device)
+    sd.wait()
+
+
+def speak(text, device="setting"):
+    """AIの返事を声で読み上げる（裏で再生し、新しい読み上げが来たら前のものは止める）"""
+    global _voice_turn
+    _voice_turn += 1
+    turn = _voice_turn
+    device = VOICE_DEVICE if device == "setting" else device
+
+    def work():
+        path = os.path.abspath(os.path.join(OUTPUT_DIR, f"voice_{turn}.wav"))
+        try:
+            synthesize(text, path)
+            if turn == _voice_turn:
+                sd.stop()
+                play_wav(path, device)
+        except Exception as e:
+            print(f"⚠ 声を出せませんでした: {e}")
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+    threading.Thread(target=work, daemon=True).start()
 
 
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
