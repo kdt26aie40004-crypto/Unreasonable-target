@@ -60,9 +60,13 @@ for d in (OUTPUT_DIR, CALENDAR_DIR, MESSAGES_DIR):
 # ============================================================
 # 1. Whisper による文字起こし
 # ============================================================
-def record_voice():
+WHISPER = None  # main() で読み込む。None のときは文字入力モード
+
+
+def record_voice(wait=True):
     """マイクから録音する（Enterで開始、もう一度Enterで終了）"""
-    input("\n[AI] ご用件をどうぞ。Enterで録音開始...")
+    if wait:
+        input("\n[AI] ご用件をどうぞ。Enterで録音開始...")
     frames = []
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32",
                             callback=lambda data, *_: frames.append(data.copy()))
@@ -73,16 +77,28 @@ def record_voice():
     return np.concatenate(frames).flatten()
 
 
-def transcribe(whisper, audio):
+def transcribe(whisper, audio, label="あなたのご要望"):
     """ローカルの Whisper で音声をテキスト化する"""
     print("[AI] 音声を解析中...")
     segments, _ = whisper.transcribe(audio, language="ja")
     text = "".join(s.text for s in segments).strip()
     if text:
-        print(f"あなたのご要望: 「{text}」")
+        print(f"{label}: 「{text}」")
     else:
         print("音声が聞き取れませんでした。")
     return text or None
+
+
+def ask_user(question):
+    """宛先などを本人に聞く。文字で入力するか、音声モードなら Enter だけで声で答えられる"""
+    if WHISPER is None:
+        return input(f"[AI] {question}（Enterでスキップ）: ").strip("﻿ ")
+    answer = input(f"[AI] {question}（文字で入力 / Enterで音声入力）: ").strip("﻿ ")
+    if answer:
+        return answer
+    audio = record_voice(wait=False)
+    text = (transcribe(WHISPER, audio, label="聞き取った内容") if audio is not None else None) or ""
+    return text.rstrip("。、 ")
 
 
 # ============================================================
@@ -215,14 +231,48 @@ REPLY_PROMPT = """あなたはユーザー本人の「第二の自分」です�
 ユーザーに届いたメッセージへの返信を、ユーザー本人として書いてください。
 
 【重要ルール】
-1. 「自分が過去に書いた文章」があれば、その口調・敬語の度合い・署名を真似ること。
+1. 「自分が過去に書いた文章」があれば、その口調・敬語の度合いを真似ること。
 2. 「ユーザーからの指示」に書かれた返事（参加する・断るなど）は本人の決定なので、はっきり伝えること。
 3. 指示に無く本人に確認しないと分からないこと（具体的な日時や金額など）だけは、断定せず「〇〇（要確認）」と書くこと。
-4. 返信の本文だけを出力し、解説は書かないこと。"""
+4. 宛名（〇〇様）と署名は後から付けるので書かないこと。本文だけを出力し、解説も書かないこと。"""
+
+
+def signature():
+    """profile.md の「署名:」（無ければ「名前:」）を返す"""
+    match = re.search(r"(?:返信の)?署名[:：]\s*(.+)", load_profile()) or \
+        re.search(r"名前[:：]\s*(.+)", load_profile())
+    return match.group(1).strip() if match else ""
+
+
+HONORIFIC = re.compile(r"^\S{1,15}(様|さん|先生|殿|各位|くん|ちゃん)[、,]?$")
+
+
+def strip_salutation(body):
+    """AIが書いてしまった宛名・署名の行を取り除く"""
+    lines = body.strip().splitlines()
+    names = {signature(), *(re.findall(r"名前[:：]\s*(.+)", load_profile()))} - {""}
+    while lines and (HONORIFIC.match(lines[0].strip()) or not lines[0].strip()):
+        lines.pop(0)
+    # 「山田」「山田です。」「山田より」のような署名の行
+    while lines and (re.sub(r"(です|より)?[。.]?$", "", lines[-1].strip()) in names or not lines[-1].strip()):
+        lines.pop()
+    return "\n".join(lines)
+
+
+def compose_letter(to, body):
+    """本人が指定した宛先と、プロフィールの署名で本文を挟む（AIに宛先を推測させない）"""
+    body = strip_salutation(body)
+    lines = []
+    if to:
+        lines += [to if to.endswith(("様", "さん", "先生", "殿", "各位")) else f"{to}様", ""]
+    lines.append(body.strip())
+    if signature():
+        lines += ["", signature()]
+    return "\n".join(lines)
 
 
 def generate_reply(user_request, message):
-    """届いたメッセージへの返信の下書きを作る"""
+    """届いたメッセージへの返信の本文を作る"""
     parts = []
     profile = load_profile()
     if profile:
@@ -300,34 +350,54 @@ def free_slots(events, days=7, min_minutes=60, limit=15):
 
 
 SCHEDULE_PROMPT = """あなたはユーザー本人の「第二の自分」であり、有能な秘書です。
-重複している予定の組ごとに、次の形式のMarkdownで調整案を書いてください。
+重なっている予定A・Bのどちらを優先するか決め、もう一方の調整案をJSONだけで出力してください。
 
-## <予定A> と <予定B>
-- **優先する予定**: <予定名>（優先順位の「<当てはまる項目>」に当たるため）
-- **もう一方の対応**: <予定名> をリスケ / 代理出席 / 途中参加 のどれにするか
-- **移動先の候補**: 「空いている時間」の一覧から2つ選ぶ
-- **連絡文の下書き**: 優先しない方の予定の相手へ送る、日程変更をお願いする丁寧で短いメッセージ
+出力形式:
+{"keep": "A または B",
+ "reason": "優先する理由（ユーザーの情報の優先順位のどの項目に当たるか）",
+ "action": "リスケ / 代理出席 / 途中参加 のどれか",
+ "slots": [移動先として選んだ「空いている時間」の番号を2つ]}
+
+優先順位は「ユーザーの情報」に書かれた順位に従うこと。各予定を最も近い項目に当てはめて比べること。"""
+
+RESCHEDULE_PROMPT = """あなたはユーザー本人の「第二の自分」です。
+ユーザー本人として、予定の相手に日程変更をお願いする丁寧で短いメッセージの本文を書いてください。
 
 【重要ルール】
-1. 優先順位は「ユーザーの情報」に書かれた順位に従うこと。各予定を最も近い項目に当てはめて比べ、予定名で答えること。
-2. 移動先は必ず「空いている時間」の一覧から選び、予定一覧にある時間は絶対に提案しないこと。
-3. 連絡文はユーザー本人が相手に送るもの。宛先は「〇〇様」とし、最後にユーザーの署名を入れること。移動先の候補も本文に書くこと。"""
+1. 変更をお願いする予定と、移動先の候補日時を必ず本文に書くこと。
+2. 別の予定と重なったことを理由に、丁寧にお詫びすること。
+3. 宛名（〇〇様）と署名は後から付けるので書かないこと。本文だけを出力すること。"""
 
 
-def generate_schedule_plan(events, conflicts):
-    """ダブルブッキングの調整案を作る"""
+def generate_schedule_decision(events, a, b, slots):
+    """重なった予定A・Bの、どちらを優先してどう調整するかを決める"""
     parts = []
     profile = load_profile()
     if profile:
         parts.append(f"■ ユーザーの情報\n{profile}")
-    parts.append("■ 重複している予定\n" + "\n".join(
-        f"- {format_event(a)} ／ {format_event(b)}" for a, b in conflicts))
+    parts.append(f"■ 重なっている予定\nA: {format_event(a)}\nB: {format_event(b)}")
     parts.append(f"■ 今後{SCHEDULE_DAYS}日間の予定一覧\n" + "\n".join(
         f"- {format_event(e)}" for e in events))
     parts.append("■ 空いている時間\n" + "\n".join(
-        f"- {s:%m/%d(%a) %H:%M}〜{e:%H:%M}" for s, e in free_slots(events)))
-    print(f"[AI] {TEXT_MODEL} で調整案を考え中...")
-    return ask_ollama(SCHEDULE_PROMPT, "\n\n".join(parts), model=TEXT_MODEL).strip()
+        f"{i}: {s:%m/%d(%a) %H:%M}〜{e:%H:%M}" for i, (s, e) in enumerate(slots)))
+    print(f"[AI] {TEXT_MODEL} で「{a['title']}」と「{b['title']}」の調整案を考え中...")
+    try:
+        decision = json.loads(ask_ollama(SCHEDULE_PROMPT, "\n\n".join(parts),
+                                         json_mode=True, model=TEXT_MODEL))
+    except json.JSONDecodeError:
+        decision = {}
+    # 移動先は計算済みの空き時間からだけ選ぶ（AIが予定のある時間を提案しないように）
+    picked = [slots[i] for i in decision.get("slots", []) if isinstance(i, int) and 0 <= i < len(slots)]
+    decision["slots"] = picked[:2] or slots[:2]
+    decision["keep"] = "B" if decision.get("keep") == "B" else "A"
+    return decision
+
+
+def generate_reschedule_body(move, slots):
+    """優先しない方の予定の相手へ送る、日程変更のお願いの本文を作る"""
+    prompt = (f"変更をお願いする予定: {format_event(move)}\n"
+              "移動先の候補: " + "、".join(f"{s:%m/%d(%a) %H:%M}〜{e:%H:%M}" for s, e in slots))
+    return ask_ollama(RESCHEDULE_PROMPT, prompt, model=TEXT_MODEL).strip()
 
 
 # --- report: お任せした作業の結果報告 ---
@@ -545,7 +615,8 @@ def handle_reply(user_request, info):
         print("[AI] 返信したいメッセージをコピーしてから、もう一度お願いします。")
         return
     print(f"[AI] クリップボードのメッセージに返信します:\n{message[:200]}")
-    draft = generate_reply(user_request, message)
+    to = ask_user("返信の宛先の名前は？")
+    draft = compose_letter(to, generate_reply(user_request, message))
     path = save_text("reply", "txt", draft)
     open_draft(path, copy=True)
     print("[AI] 下書きをメモ帳で開き、クリップボードにコピーしました。確認してから送信してください。")
@@ -563,8 +634,22 @@ def handle_schedule(user_request, info):
     print(f"[AI] ダブルブッキングが {len(conflicts)} 件見つかりました:")
     for a, b in conflicts:
         print(f"  ・{format_event(a)}\n    {format_event(b)}")
-    plan = generate_schedule_plan(events, conflicts)
-    path = save_text("schedule", "md", plan)
+
+    slots = free_slots(events)
+    sections = []
+    for a, b in conflicts:
+        d = generate_schedule_decision(events, a, b, slots)
+        keep, move = (a, b) if d["keep"] == "A" else (b, a)
+        print(f"[AI] 「{keep['title']}」を優先し、「{move['title']}」を{d.get('action', 'リスケ')}する案です。")
+        to = ask_user(f"「{move['title']}」の連絡相手の名前は？")
+        letter = compose_letter(to, generate_reschedule_body(move, d["slots"]))
+        sections.append("\n".join([
+            f"## {format_event(a)} ／ {format_event(b)}",
+            f"- **優先する予定**: {keep['title']}（{d.get('reason', '')}）",
+            f"- **もう一方の対応**: {move['title']} を{d.get('action', 'リスケ')}",
+            "- **移動先の候補**: " + "、".join(f"{s:%m/%d(%a) %H:%M}〜{e:%H:%M}" for s, e in d["slots"]),
+            "- **連絡文の下書き**:", "", "```", letter, "```"]))
+    path = save_text("schedule", "md", "\n\n".join(sections))
     open_draft(path)
 
 
@@ -600,10 +685,11 @@ HANDLERS = {"tool": handle_tool, "reply": handle_reply, "schedule": handle_sched
 # ============================================================
 def main():
     # --text: マイクの代わりにキーボードで要望を入力する（Whisper を使わない）
+    global WHISPER
     text_mode = "--text" in sys.argv
     if not text_mode:
         print("[AI] Whisper モデルを読み込み中...")
-        whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+        WHISPER = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
 
     while True:
         if text_mode:
@@ -612,7 +698,7 @@ def main():
             audio = record_voice()
             if audio is None:
                 continue
-            user_request = transcribe(whisper, audio)
+            user_request = transcribe(WHISPER, audio)
         if not user_request:
             continue
 
