@@ -1,4 +1,4 @@
-﻿"""第二の自分 — 声の指示から業務を代わりにこなすシステム
+"""第二の自分 — 声の指示から業務を代わりにこなすシステム
 
 構成（system_architecture_concept.md に準拠）:
   [ユーザーの音声指示]
@@ -44,6 +44,7 @@ OUTPUT_DIR = "./my_powershell_tools"
 HISTORY_FILE = os.path.join(OUTPUT_DIR, "history.jsonl")
 CONFIRM_BEFORE_RUN = True            # 生成コードを実行前に確認する（False で即時実行）
 BROWSER = "chrome"                   # 作ったWebサイトを開くブラウザ（chrome / msedge / firefox）
+VERBOSE = True                       # 生成したコードや保存先などの詳細を表示する（画面版では False）
 
 # --- パーソナルデータ（GitHubには上げない） ---
 DATA_DIR = "./data"
@@ -105,6 +106,12 @@ def ask_user(question):
 # ============================================================
 # 2. Ollama（ローカルLLM）
 # ============================================================
+def progress(text):
+    """処理の途中経過（詳細表示のときだけ出す）"""
+    if VERBOSE:
+        print(f"[AI] {text}")
+
+
 def ask_ollama(system, prompt, json_mode=False, model=MODEL_NAME):
     """Ollama に問い合わせて応答テキストを返す（モデルが未取得なら MODEL_NAME で代用）"""
     payload = {"model": model, "system": system, "prompt": prompt, "stream": False}
@@ -206,8 +213,20 @@ def generate_code(user_request, related):
         examples = "\n\n".join(f"要望: {h['request']}\n```{h['lang']}\n{h['code']}\n```"
                                for h in related)
         prompt = f"参考: 過去にあなたが作ったコード（書き方の好みを合わせること）\n{examples}\n\n{prompt}"
-    print(f"[AI] {MODEL_NAME} でコードを構築中...")
+    progress(f"{MODEL_NAME} でコードを構築中...")
     return ask_ollama(CODE_PROMPT, prompt)
+
+
+EXPLAIN_PROMPT = """PowerShellスクリプトが何をするかを、プログラミングを知らない人にも分かるように説明してください。
+箇条書きで3行以内、です・ます調で。ファイルの移動・削除・PCの設定変更があれば必ず書くこと。説明だけを出力すること。"""
+
+
+def explain_code(code):
+    """実行前の確認用に、コードがすることを普通の言葉で説明する"""
+    try:
+        return ask_ollama(EXPLAIN_PROMPT, code, model=TEXT_MODEL).strip()
+    except requests.RequestException:
+        return ""
 
 
 # --- reply: 代理返信 ---
@@ -283,7 +302,7 @@ def generate_reply(user_request, message):
         parts.append("■ 自分が過去に書いた文章\n" + "\n---\n".join(examples))
     parts.append(f"■ 届いたメッセージ\n{message}")
     parts.append(f"■ ユーザーからの指示\n{user_request}")
-    print(f"[AI] {TEXT_MODEL} で返信を考え中...")
+    progress(f"{TEXT_MODEL} で返信を考え中...")
     return ask_ollama(REPLY_PROMPT, "\n\n".join(parts), model=TEXT_MODEL).strip()
 
 
@@ -381,7 +400,7 @@ def generate_schedule_decision(events, a, b, slots):
         f"- {format_event(e)}" for e in events))
     parts.append("■ 空いている時間\n" + "\n".join(
         f"{i}: {s:%m/%d(%a) %H:%M}〜{e:%H:%M}" for i, (s, e) in enumerate(slots)))
-    print(f"[AI] {TEXT_MODEL} で「{a['title']}」と「{b['title']}」の調整案を考え中...")
+    progress(f"{TEXT_MODEL} で「{a['title']}」と「{b['title']}」の調整案を考え中...")
     try:
         decision = json.loads(ask_ollama(SCHEDULE_PROMPT, "\n\n".join(parts),
                                          json_mode=True, model=TEXT_MODEL))
@@ -438,7 +457,7 @@ def generate_report(entries):
         parts.append(f"■ 作業: {e['task']}（{e['when']}、{e['registered_at']} に依頼）\n"
                      f"状態: {task_status(e, bool(log))}\n"
                      f"ログ:\n{log or '（なし）'}")
-    print(f"[AI] {TEXT_MODEL} で結果をまとめ中...")
+    progress(f"{TEXT_MODEL} で結果をまとめ中...")
     return ask_ollama(REPORT_PROMPT, "\n\n".join(parts), model=TEXT_MODEL).strip()
 
 
@@ -463,10 +482,11 @@ def save_text(prefix, ext, text):
     path = os.path.abspath(os.path.join(OUTPUT_DIR, f"{prefix}_{int(time.time())}.{ext}"))
     with open(path, "w", encoding="utf-8-sig") as f:
         f.write(text)
-    print(f"\n✨ 成功しました！以下に保存しました:\n{path}")
-    print("-" * 50)
-    print(text)
-    print("-" * 50)
+    if VERBOSE:
+        print(f"\n✨ 成功しました！以下に保存しました:\n{path}")
+        print("-" * 50)
+        print(text)
+        print("-" * 50)
     return path
 
 
@@ -517,7 +537,7 @@ def run_with_powershell(lang, path, code):
     if not confirm("実行しますか？", code if lang == "powershell" else None):
         print("[AI] 実行をスキップしました（ファイルは保存済みです）。")
         return
-    print("[AI] PowerShellを起動して実行します...")
+    progress("PowerShellを起動して実行します...")
     if lang == "html":
         # 指定のブラウザで開く（見つからなければ既定のブラウザ）
         script = (f"try {{ Start-Process -FilePath {ps_quote(BROWSER)} -ArgumentList {ps_quote(f'"{path}"')} -ErrorAction Stop }} "
@@ -598,8 +618,10 @@ def delegate(path, info):
                             "path": path, "log": log,
                             "registered_at": f"{datetime.now():%Y-%m-%d %H:%M}"},
                            ensure_ascii=False) + "\n")
-    print(f"[AI] お任せください。{when} に実行します（タスク名: {name}）")
-    print(f"     結果は「どうだった？」と聞けば報告します。ログ: {log}")
+    print(f"[AI] お任せください。{when} に実行します。")
+    if VERBOSE:
+        print(f"     タスク名: {name}  ログ: {log}")
+    print("     結果は「どうだった？」と聞けば報告します。")
 
 
 # ============================================================
@@ -616,7 +638,7 @@ def handle_tool(user_request, info):
 def handle_reply(user_request, info):
     message = read_clipboard()
     if not message:
-        print("[AI] 返信したいメッセージをコピーしてから、もう一度お願いします。")
+        print("[AI] 返信したいメッセージがありません。メッセージをコピーしてから、もう一度お願いします。")
         return
     print(f"[AI] クリップボードのメッセージに返信します:\n{message[:200]}")
     to = ask_user("返信の宛先の名前は？")
@@ -673,12 +695,28 @@ def handle_delegate(user_request, info):
         print("[AI] お任せを取りやめました（ファイルは保存済みです）。")
 
 
-def handle_report(user_request, info):
+def load_delegated():
+    """お任せした作業の一覧を返す"""
     if not os.path.exists(DELEGATED_FILE):
+        return []
+    with open(DELEGATED_FILE, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def cancel_delegated(entry):
+    """お任せを取り消す（予約はタスクスケジューラから削除し、一覧からも外す）"""
+    if entry["task_name"].startswith(TASK_PREFIX):
+        run_ps(f"Unregister-ScheduledTask -TaskName {ps_quote(entry['task_name'])} -Confirm:$false")
+    rest = [e for e in load_delegated() if e != entry]
+    with open(DELEGATED_FILE, "w", encoding="utf-8") as f:
+        f.writelines(json.dumps(e, ensure_ascii=False) + "\n" for e in rest)
+
+
+def handle_report(user_request, info):
+    entries = load_delegated()[-10:]  # 直近10件
+    if not entries:
         print("[AI] まだ何もお任せされていません。")
         return
-    with open(DELEGATED_FILE, encoding="utf-8") as f:
-        entries = [json.loads(line) for line in f][-10:]  # 直近10件
     print(generate_report(entries))
 
 
