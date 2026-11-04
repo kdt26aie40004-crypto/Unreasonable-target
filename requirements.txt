@@ -2,3 +2,5 @@ faster-whisper
 sounddevice
 numpy
 requests
+icalendar
+recurring-ical-events
