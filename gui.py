@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,7 @@ try:
     import numpy as np
     import requests
     import sounddevice as sd
+    from PIL import Image, ImageDraw, ImageFont
     import main
     from agent import Agent
 except ImportError as e:
@@ -32,25 +34,44 @@ except ImportError as e:
     sys.exit(1)
 
 # --- 色（ライト, ダーク） ---
-ACCENT = ("#6C5CE7", "#8B7CF6")
-ACCENT_HOVER = ("#5A4BD1", "#7A6AE8")
-BG = ("#F4F5FB", "#14151B")
-SURFACE = ("#FFFFFF", "#20212B")
-SIDEBAR = ("#ECEBFA", "#1A1B23")
-BORDER = ("#E3E3EE", "#2D2E3A")
-TEXT = ("#1E1E2A", "#ECECF1")
-MUTED = ("#6B6F80", "#9A9DB0")
-TOOL_BG, TOOL_FG = ("#E6F6EE", "#1B3A2B"), ("#1F7A4D", "#7EE2A8")
-PLAN_BG = ("#F0EDFF", "#272340")
-ALERT_BG, ALERT_FG = ("#FFF1E6", "#3A2A1E"), ("#B4530B", "#FFB27A")
+ACCENT = ("#7C5CFC", "#9B85FF")
+ACCENT_HOVER = ("#6846F0", "#8A72F5")
+BG = ("#F6F5FF", "#121220")
+SURFACE = ("#FFFFFF", "#1E1D2E")
+SIDEBAR = ("#EEEBFF", "#191829")
+BORDER = ("#E4E1F5", "#2E2C44")
+TEXT = ("#1F1B3A", "#EDEBFA")
+MUTED = ("#6E6A8A", "#A19DBD")
 DANGER = ("#D92D20", "#FF7A70")
 READY, BUSY, OFF = "#22C55E", "#F59E0B", "#EF4444"
+GRADIENT = ("#7C5CFC", "#C04CF0", "#F25C9A")       # 紫 → マゼンタ → ピンク
+GRADIENT_DARK = ("#4C35C9", "#8A2FB8", "#B8336F")
+
+# 種類ごとの色: (文字色, 背景色)。それぞれ (ライト, ダーク)
+PALETTE = {
+    "violet": (("#6D4AFF", "#B3A3FF"), ("#EFEAFF", "#2A2446")),
+    "pink": (("#D6336C", "#FF9CC2"), ("#FFE6F0", "#3D2132")),
+    "teal": (("#0F8F82", "#5EEAD4"), ("#DDF6F2", "#14332F")),
+    "orange": (("#C2610C", "#FDBA74"), ("#FFEFDC", "#3B2A17")),
+    "blue": (("#2563EB", "#93C5FD"), ("#E4EDFF", "#1C2A46")),
+    "green": (("#15803D", "#86EFAC"), ("#DFF7E8", "#153222")),
+    "red": (("#C53030", "#FCA5A5"), ("#FDE6E6", "#3A1D1D")),
+}
+STATUS_COLORS = {READY: "green", BUSY: "orange", OFF: "red"}
+SOLID = {"violet": "#7C5CFC", "pink": "#F25C9A", "teal": "#14B8A6", "orange": "#F59E0B", "blue": "#3B82F6",
+         "green": "#22C55E", "red": "#EF4444"}
+# 道具の表示: (表示名に含まれる言葉, 色, アイコン)
+TOOL_STYLES = (("予定", "teal", "📅"), ("ダブルブッキング", "violet", "🧩"), ("お知らせ", "orange", "⏰"),
+               ("日時", "orange", "⏰"), ("取り消", "red", "🗑"), ("状況", "blue", "📋"), ("お任せ", "blue", "🔁"),
+               ("メッセージ", "pink", "✉"), ("実行", "green", "▶"))
+PLAN_BG = PALETTE["violet"][1]
+ALERT_FG, ALERT_BG = PALETTE["orange"]
 
 EXAMPLES = [
-    "予定を確認して、重なってたら調整案を作って",
-    "明日の朝8時に発表会の準備をするよう知らせて",
-    "毎朝9時にディスクの空き容量を記録しといて",
-    "任せてた作業どうだった？",
+    ("📅", "予定を確認して、重なってたら調整案を作って", "teal"),
+    ("⏰", "明日の朝8時に発表会の準備をするよう知らせて", "orange"),
+    ("🔁", "毎朝9時にディスクの空き容量を記録しといて", "blue"),
+    ("📋", "任せてた作業どうだった？", "pink"),
 ]
 
 MONITOR_MINUTES = 15  # 自分から見回る間隔
@@ -74,6 +95,70 @@ def save_settings(**values):
         json.dump(settings, f, ensure_ascii=False)
 
 ctk.set_appearance_mode("System")
+
+FONT_FILES = {True: [r"C:\Windows\Fonts\YuGothB.ttc", r"C:\Windows\Fonts\meiryob.ttc"],
+              False: [r"C:\Windows\Fonts\YuGothM.ttc", r"C:\Windows\Fonts\meiryo.ttc"]}
+HI = 3  # 画像は3倍の解像度で作り、縮小して表示する（くっきり見せるため）
+
+
+def pil_font(size, bold=True):
+    for path in FONT_FILES[bold] + FONT_FILES[not bold]:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
+
+
+def gradient(w, h, colors, radius=0):
+    """左から右へ（少し斜めに）色が変わるグラデーション画像"""
+    rgb = np.array([[int(c[k:k + 2], 16) for k in (1, 3, 5)] for c in colors], dtype=float)
+    t = np.clip(np.linspace(0, 1, w)[None, :] * 0.8 + np.linspace(0, 1, h)[:, None] * 0.2, 0, 1)
+    seg = len(rgb) - 1
+    idx = np.minimum((t * seg).astype(int), seg - 1)
+    local = (t * seg - idx)[..., None]
+    img = Image.fromarray((rgb[idx] * (1 - local) + rgb[idx + 1] * local).astype("uint8"), "RGB").convert("RGBA")
+    if radius:
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius, fill=255)
+        img.putalpha(mask)
+    return img
+
+
+def decorate(img, alpha=40):
+    """グラデーションに、半透明の丸を重ねて飾る"""
+    w, h = img.size
+    layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for cx, cy, r in ((0.92, 0.1, 0.55), (0.78, 1.05, 0.35), (0.62, -0.2, 0.22)):
+        d.ellipse((w * cx - h * r, h * cy - h * r, w * cx + h * r, h * cy + h * r), fill=(255, 255, 255, alpha))
+    out = Image.alpha_composite(img, layer)
+    out.putalpha(img.getchannel("A"))
+    return out
+
+
+def avatar_image(px, colors=GRADIENT, ring=0):
+    """グラデーションの丸に「自」の字のアバター"""
+    img = gradient(px, px, colors)
+    mask = Image.new("L", (px, px), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, px - 1, px - 1), fill=255)
+    img.putalpha(mask)
+    d = ImageDraw.Draw(img)
+    if ring:
+        d.ellipse((ring // 2, ring // 2, px - 1 - ring // 2, px - 1 - ring // 2), outline=(255, 255, 255, 230), width=ring)
+    d.text((px / 2, px / 2), "自", font=pil_font(int(px * 0.46)), fill="white", anchor="mm")
+    return img
+
+
+def badge_image(px, color, text=None):
+    """番号（text）か、チェックマーク（text=None）の丸いバッジ"""
+    img = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.ellipse((0, 0, px - 1, px - 1), fill=color)
+    if text is None:
+        d.line([(px * 0.28, px * 0.52), (px * 0.44, px * 0.68), (px * 0.73, px * 0.36)], fill="white",
+               width=max(2, px // 9), joint="curve")
+    else:
+        d.text((px / 2, px / 2), text, font=pil_font(int(px * 0.55)), fill="white", anchor="mm")
+    return img
 
 
 def has_microphone():
@@ -146,6 +231,10 @@ class App:
         self.plan_items, self.typing, self.wrapped = [], None, []
 
         self.font = lambda size=14, weight="normal": ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
+        self.avatar_img = ctk.CTkImage(avatar_image(34 * HI), avatar_image(34 * HI, GRADIENT_DARK), size=(34, 34))
+        self.num_badges = {n: ctk.CTkImage(badge_image(24 * HI, "#7C5CFC", str(n)), size=(24, 24)) for n in range(1, 10)}
+        self.check_badge = ctk.CTkImage(badge_image(24 * HI, "#22C55E"), size=(24, 24))
+        self.banner_width = 0
         root.title("第二の自分")
         root.geometry("1120x760")
         root.minsize(860, 600)
@@ -173,26 +262,23 @@ class App:
         side.grid_propagate(False)
         side.grid_columnconfigure(0, weight=1)
 
-        self.circle(side, 72, 30).grid(row=0, column=0, pady=(32, 10))
-        ctk.CTkLabel(side, text="第二の自分", font=self.font(20, "bold"), text_color=TEXT).grid(row=1, column=0)
-        ctk.CTkLabel(side, text="あなたの代わりに考えて動く\nAIエージェント", font=self.font(12),
-                     text_color=MUTED, justify="center").grid(row=2, column=0, pady=(2, 10))
+        hero = ctk.CTkImage(self.hero_image(GRADIENT), self.hero_image(GRADIENT_DARK), size=(222, 178))
+        ctk.CTkLabel(side, text="", image=hero).grid(row=0, column=0, padx=14, pady=(16, 10))
 
-        status = ctk.CTkFrame(side, fg_color=SURFACE, corner_radius=14)
-        status.grid(row=3, column=0, padx=18, pady=(4, 18), sticky="ew")
-        self.status_dot = ctk.CTkLabel(status, text="●", font=self.font(14), text_color=BUSY, width=16)
+        self.status_card = ctk.CTkFrame(side, fg_color=PALETTE["orange"][1], corner_radius=14)
+        self.status_card.grid(row=3, column=0, padx=14, pady=(0, 14), sticky="ew")
+        self.status_dot = ctk.CTkLabel(self.status_card, text="●", font=self.font(14), text_color=BUSY, width=16)
         self.status_dot.pack(side="left", padx=(12, 4), pady=8)
-        self.status_label = ctk.CTkLabel(status, text="準備中です", font=self.font(12), text_color=TEXT,
-                                         anchor="w")
+        self.status_label = ctk.CTkLabel(self.status_card, text="準備中です", font=self.font(12, "bold"),
+                                         text_color=PALETTE["orange"][0], anchor="w")
         self.status_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        for row, (text, command) in enumerate((("＋  新しい会話", self.new_conversation),
-                                               ("👤  自分の情報", self.open_profile),
-                                               ("📅  予定を読み込む", self.open_calendar),
-                                               ("📋  お任せ一覧", self.open_tasks)), start=4):
-            ctk.CTkButton(side, text=text, command=command, anchor="w", height=40, corner_radius=12,
-                          font=self.font(14), fg_color="transparent", text_color=TEXT,
-                          hover_color=SURFACE).grid(row=row, column=0, padx=14, pady=2, sticky="ew")
+        for row, (icon, text, color, command) in enumerate((
+                ("＋", "新しい会話", "violet", self.new_conversation),
+                ("👤", "自分の情報", "blue", self.open_profile),
+                ("📅", "予定を読み込む", "teal", self.open_calendar),
+                ("📋", "お任せ一覧", "orange", self.open_tasks)), start=4):
+            self.menu_item(side, icon, text, color, command).grid(row=row, column=0, padx=12, pady=2, sticky="ew")
 
         side.grid_rowconfigure(8, weight=1)
         bottom = ctk.CTkFrame(side, fg_color="transparent")
@@ -236,22 +322,26 @@ class App:
         area = ctk.CTkFrame(self.root, fg_color="transparent")
         area.grid(row=0, column=1, sticky="nsew")
         area.grid_columnconfigure(0, weight=1)
-        area.grid_rowconfigure(0, weight=1)
+        area.grid_rowconfigure(1, weight=1)
+
+        self.banner = ctk.CTkLabel(area, text="")
+        self.banner.grid(row=0, column=0, sticky="ew", padx=24, pady=(18, 4))
+        area.bind("<Configure>", lambda e: self.root.after(120, lambda w=e.width: self.update_banner(w)))
 
         self.chat = ctk.CTkScrollableFrame(area, fg_color="transparent")
-        self.chat.grid(row=0, column=0, sticky="nsew", padx=(16, 8), pady=(16, 0))
+        self.chat.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(4, 0))
         self.chat.bind("<Configure>", lambda e: self.rewrap(e.width))
 
         chips = ctk.CTkFrame(area, fg_color="transparent")
-        chips.grid(row=1, column=0, sticky="ew", padx=28, pady=(8, 4))
-        for i, text in enumerate(EXAMPLES):
-            ctk.CTkButton(chips, text=text, command=lambda t=text: self.fill(t), height=30, corner_radius=15,
-                          font=self.font(12), fg_color=SURFACE, text_color=TEXT, hover_color=PLAN_BG,
-                          border_width=1, border_color=BORDER).grid(row=i // 2, column=i % 2, padx=4, pady=3,
-                                                                    sticky="w")
+        chips.grid(row=2, column=0, sticky="ew", padx=24, pady=(8, 4))
+        for i, (icon, text, color) in enumerate(EXAMPLES):
+            fg, bg = PALETTE[color]
+            ctk.CTkButton(chips, text=f"{icon}  {text}", command=lambda t=text: self.fill(t), height=34,
+                          corner_radius=17, font=self.font(12, "bold"), fg_color=bg, text_color=fg,
+                          hover_color=BORDER).grid(row=i // 2, column=i % 2, padx=4, pady=3, sticky="w")
 
-        composer = ctk.CTkFrame(area, fg_color=SURFACE, corner_radius=26, border_width=1, border_color=BORDER)
-        composer.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 20))
+        composer = ctk.CTkFrame(area, fg_color=SURFACE, corner_radius=26, border_width=2, border_color=PLAN_BG)
+        composer.grid(row=3, column=0, sticky="ew", padx=24, pady=(4, 20))
         composer.grid_columnconfigure(0, weight=1)
         self.entry = ctk.CTkEntry(composer, height=48, border_width=0, fg_color="transparent",
                                   font=self.font(15), text_color=TEXT,
@@ -259,8 +349,8 @@ class App:
         self.entry.grid(row=0, column=0, sticky="ew", padx=(20, 6), pady=6)
         self.entry.bind("<Return>", lambda _: self.send())
         self.mic_btn = ctk.CTkButton(composer, text="🎤", width=44, height=44, corner_radius=22,
-                                     font=self.font(18), fg_color=BG, text_color=TEXT, hover_color=BORDER,
-                                     command=self.toggle_voice, state="disabled")
+                                     font=self.font(18), fg_color=PALETTE["teal"][1], text_color=PALETTE["teal"][0],
+                                     hover_color=BORDER, command=self.toggle_voice, state="disabled")
         self.mic_btn.grid(row=0, column=1, padx=4)
         self.send_btn = ctk.CTkButton(composer, text="➤", width=44, height=44, corner_radius=22,
                                       font=self.font(18, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER,
@@ -276,7 +366,9 @@ class App:
                 label.configure(wraplength=max(260, int(width * ratio)))
 
     def scroll_down(self):
-        self.root.after(50, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+        # 吹き出しの折り返しが決まって高さが変わった後にも、もう一度いちばん下へ
+        for delay in (50, 300):
+            self.root.after(delay, lambda: self.chat._parent_canvas.yview_moveto(1.0))
 
     def row(self):
         frame = ctk.CTkFrame(self.chat, fg_color="transparent")
@@ -291,54 +383,116 @@ class App:
         self.wrapped.append((lbl, ratio))
         return lbl
 
-    def circle(self, parent, size, font_size):
-        """アバター（大きさを固定した枠の中に文字を置き、正円にする）"""
-        frame = ctk.CTkFrame(parent, width=size, height=size, corner_radius=size // 2, fg_color=ACCENT)
-        frame.pack_propagate(False)
-        frame.grid_propagate(False)
-        ctk.CTkLabel(frame, text="自", text_color="white", font=self.font(font_size, "bold"),
-                     fg_color="transparent").place(relx=0.5, rely=0.5, anchor="center")
-        return frame
+    def hero_image(self, colors):
+        """サイドバー上のプロフィール欄（グラデーションにアバターと名前）"""
+        w, h = 222 * HI, 178 * HI
+        img = decorate(gradient(w, h, colors, radius=22 * HI), alpha=34)
+        size = 76 * HI
+        av = avatar_image(size, ("#FFFFFF", "#F3EEFF", "#FFE6F0"))
+        d = ImageDraw.Draw(av)
+        d.text((size / 2, size / 2), "自", font=pil_font(int(size * 0.46)), fill=colors[0], anchor="mm")
+        img.alpha_composite(av, ((w - size) // 2, 18 * HI))
+        d = ImageDraw.Draw(img)
+        d.text((w / 2, 116 * HI), "第二の自分", font=pil_font(20 * HI), fill="white", anchor="mm")
+        d.text((w / 2, 146 * HI), "考えて動くAIエージェント", font=pil_font(11 * HI, bold=False),
+               fill=(255, 255, 255, 225), anchor="mm")
+        return img
+
+    def update_banner(self, width):
+        """チャット欄の上の挨拶バナー（ウィンドウの幅に合わせて作り直す）"""
+        width = max(400, width - 48)
+        if abs(width - self.banner_width) < 8:
+            return
+        self.banner_width = width
+        match = re.search(r"名前[:：]\s*(\S+)", main.load_profile())
+        hello = f"こんにちは、{match.group(1)}さん" if match else "こんにちは"
+        now = datetime.now()
+        date = f"{now.month}月{now.day}日（{'月火水木金土日'[now.weekday()]}）"
+
+        def draw(colors):
+            w, h = width * HI, 92 * HI
+            img = decorate(gradient(w, h, colors, radius=22 * HI))
+            d = ImageDraw.Draw(img)
+            d.text((28 * HI, 20 * HI), hello, font=pil_font(22 * HI), fill="white")
+            d.text((28 * HI, 58 * HI), f"{date}　今日もあなたの代わりに考えて動きます",
+                   font=pil_font(12 * HI, bold=False), fill=(255, 255, 255, 230))
+            return img
+        self.banner.configure(image=ctk.CTkImage(draw(GRADIENT), draw(GRADIENT_DARK), size=(width, 92)))
+
+    def menu_item(self, parent, icon, text, color, command):
+        """色付きのアイコンが付いたメニューの項目"""
+        fg, bg = PALETTE[color]
+        row = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=12)
+        badge = ctk.CTkFrame(row, width=34, height=34, corner_radius=10, fg_color=SOLID[color])
+        badge.pack(side="left", padx=(6, 0), pady=4)
+        badge.pack_propagate(False)
+        icon_label = ctk.CTkLabel(badge, text=icon, font=self.font(15, "bold"), text_color="white")
+        icon_label.place(relx=0.5, rely=0.5, anchor="center")
+        ctk.CTkButton(row, text=text, command=command, anchor="w", height=38, corner_radius=10,
+                      font=self.font(14), fg_color="transparent", text_color=TEXT,
+                      hover_color=SURFACE).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        for widget in (badge, icon_label):
+            widget.bind("<Button-1>", lambda _: command())
+        return row
 
     def avatar(self, parent):
-        self.circle(parent, 34, 14).pack(side="left", anchor="n", padx=(0, 10))
+        ctk.CTkLabel(parent, text="", image=self.avatar_img).pack(side="left", anchor="n", padx=(0, 10))
+
+    def stamp(self, parent, anchor):
+        ctk.CTkLabel(parent, text=datetime.now().strftime("%H:%M"), font=self.font(10), text_color=MUTED,
+                     height=14).pack(anchor=anchor, padx=6)
 
     def bubble_user(self, text):
-        bubble = ctk.CTkFrame(self.row(), fg_color=ACCENT, corner_radius=18)
-        bubble.pack(side="right")
-        self.label(bubble, text, ratio=0.55, text_color="white").pack(padx=16, pady=10)
+        column = ctk.CTkFrame(self.row(), fg_color="transparent")
+        column.pack(side="right")
+        bubble = ctk.CTkFrame(column, fg_color=ACCENT, corner_radius=20)
+        bubble.pack(anchor="e")
+        self.label(bubble, text, ratio=0.55, text_color="white", font=self.font(15)).pack(padx=18, pady=11)
+        self.stamp(column, "e")
 
     def bubble_ai(self, text):
         row = self.row()
         self.avatar(row)
-        bubble = ctk.CTkFrame(row, fg_color=SURFACE, corner_radius=18, border_width=1, border_color=BORDER)
-        bubble.pack(side="left")
-        self.label(bubble, text).pack(padx=16, pady=10)
+        column = ctk.CTkFrame(row, fg_color="transparent")
+        column.pack(side="left")
+        bubble = ctk.CTkFrame(column, fg_color=SURFACE, corner_radius=20, border_width=1, border_color=BORDER)
+        bubble.pack(anchor="w")
+        ctk.CTkFrame(bubble, width=4, height=8, corner_radius=2, fg_color=ACCENT).pack(side="left", fill="y", padx=(12, 0),
+                                                                           pady=12)
+        self.label(bubble, text, font=self.font(15)).pack(side="left", padx=(12, 18), pady=11)
+        self.stamp(column, "w")
 
     def show_plan_card(self, steps):
         row = self.row()
-        card = ctk.CTkFrame(row, fg_color=PLAN_BG, corner_radius=16)
+        card = ctk.CTkFrame(row, fg_color=PLAN_BG, corner_radius=18, border_width=1, border_color=BORDER)
         card.pack(side="left", padx=(44, 0))
-        ctk.CTkLabel(card, text="📝  やることを考えました", font=self.font(13, "bold"),
-                     text_color=ACCENT).pack(anchor="w", padx=16, pady=(10, 4))
+        ctk.CTkLabel(card, text="📝  やることリスト", font=self.font(14, "bold"),
+                     text_color=PALETTE["violet"][0]).pack(anchor="w", padx=18, pady=(12, 6))
         self.plan_items = []
         # 「(get_schedule)」のような道具の名前は、画面には出さない
         steps = [re.sub(r"\s*[(（][^()（）]*[a-z]+_[a-z_]+[^()（）]*[)）]", "", s).strip() or s for s in steps]
         for i, step in enumerate(steps, 1):
-            item = self.label(card, f"○  {i}. {step}", ratio=0.55, font=self.font(13))
-            item.pack(anchor="w", padx=16, pady=1)
-            self.plan_items.append([item, f"{i}. {step}", False])
-        ctk.CTkFrame(card, height=8, fg_color="transparent").pack()
+            line = ctk.CTkFrame(card, fg_color="transparent")
+            line.pack(anchor="w", fill="x", padx=16, pady=3)
+            badge = ctk.CTkLabel(line, text="", image=self.num_badges.get(i, self.num_badges[9]))
+            badge.pack(side="left")
+            text = self.label(line, step, ratio=0.5, font=self.font(14))
+            text.pack(side="left", padx=(10, 0))
+            self.plan_items.append([badge, text, False])
+        ctk.CTkFrame(card, height=10, fg_color="transparent").pack()
 
     def show_tool(self, label):
         for item in self.plan_items:  # やることリストの次の項目にチェックを付ける
             if not item[2]:
-                item[0].configure(text=f"✓  {item[1]}", text_color=TOOL_FG)
+                item[0].configure(image=self.check_badge)
+                item[1].configure(text_color=PALETTE["green"][0])
                 item[2] = True
                 break
-        pill = ctk.CTkLabel(self.row(), text=f"🔧  {label}…", font=self.font(12), text_color=TOOL_FG,
-                            fg_color=TOOL_BG, corner_radius=12)
-        pill.pack(side="left", padx=(44, 0), ipadx=10, ipady=2)
+        color, icon = next(((c, i) for word, c, i in TOOL_STYLES if word in label), ("green", "🔧"))
+        fg, bg = PALETTE[color]
+        pill = ctk.CTkLabel(self.row(), text=f"{icon}  {label}…", font=self.font(12, "bold"), text_color=fg,
+                            fg_color=bg, corner_radius=14, height=30)
+        pill.pack(side="left", padx=(44, 0), ipadx=12)
 
     def show_note(self, text):
         if text.count("\n") >= 3:  # 実行結果や下書きは、等幅のカードで見やすく
@@ -347,21 +501,24 @@ class App:
             self.label(card, text, ratio=0.7, font=ctk.CTkFont(family="Consolas", size=12),
                        text_color=MUTED).pack(anchor="w", padx=14, pady=10)
             return
-        color = DANGER if text.startswith("⚠") else MUTED
+        color = DANGER if text.startswith("⚠") else (PALETTE["green"][0] if text.startswith("✓") else MUTED)
         self.label(self.row(), text, ratio=0.7, font=self.font(12), text_color=color).pack(
             side="left", padx=(44, 0))
 
     def show_alert(self, text):
-        card = ctk.CTkFrame(self.row(), fg_color=ALERT_BG, corner_radius=16)
+        card = ctk.CTkFrame(self.row(), fg_color=ALERT_BG, corner_radius=18)
         card.pack(side="left", padx=(44, 0))
-        self.label(card, f"🔔  {text}", font=self.font(14, "bold"), text_color=ALERT_FG).pack(padx=16, pady=10)
+        ctk.CTkFrame(card, width=4, height=8, corner_radius=2, fg_color=("#F59E0B", "#FDBA74")).pack(
+            side="left", fill="y", padx=(12, 0), pady=12)
+        self.label(card, f"🔔  {text}", font=self.font(14, "bold"), text_color=ALERT_FG).pack(
+            side="left", padx=(12, 18), pady=11)
 
     def show_typing(self, show):
         if show and self.typing is None:
             row = self.row()
             self.avatar(row)
-            self.typing = ctk.CTkLabel(row, text="", font=self.font(13), text_color=MUTED, fg_color=SURFACE,
-                                       corner_radius=16)
+            self.typing = ctk.CTkLabel(row, text="", font=self.font(13, "bold"), text_color=PALETTE["violet"][0],
+                                       fg_color=PLAN_BG, corner_radius=16)
             self.typing.pack(side="left", ipadx=14, ipady=6)
             self.typing_row = row
         elif not show and self.typing is not None:
@@ -388,7 +545,9 @@ class App:
         self.root.after(350 if self.busy else 100, self.poll)
 
     def set_status(self, text, color):
-        self.status_label.configure(text=text)
+        fg, bg = PALETTE[STATUS_COLORS[color]]
+        self.status_card.configure(fg_color=bg)
+        self.status_label.configure(text=text, text_color=fg)
         self.status_dot.configure(text_color=color)
 
     def set_busy(self, busy, text="考え中"):
@@ -719,6 +878,8 @@ class App:
                 f.write("\n".join(body) + "\n")
             win.destroy()
             print("✓ 自分の情報を保存しました。")
+            self.banner_width = 0  # 挨拶の名前を新しくする
+            self.update_banner(self.banner.master.winfo_width())
         self.buttons(win, "保存", save, "あとで" if first else "閉じる", win.destroy)
 
     def open_calendar(self):
@@ -792,7 +953,7 @@ class App:
                 info.pack(side="left", fill="x", expand=True, padx=14, pady=10)
                 ctk.CTkLabel(info, text=entry["task"], font=self.font(14, "bold"), text_color=TEXT,
                              wraplength=440, justify="left", anchor="w").pack(anchor="w")
-                color = DANGER if status.startswith("エラー") else (TOOL_FG if status.startswith(("成功", "実行済み")) else MUTED)
+                color = DANGER if status.startswith("エラー") else (PALETTE["green"][0] if status.startswith(("成功", "実行済み")) else MUTED)
                 ctk.CTkLabel(info, text=f"🕒 {entry['when']}　　{status}", font=self.font(12), text_color=color,
                              wraplength=440, justify="left", anchor="w").pack(anchor="w", pady=(2, 0))
                 ctk.CTkButton(card, text="取り消す", width=84, height=32, corner_radius=16, font=self.font(12),
