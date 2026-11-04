@@ -28,6 +28,7 @@ try:
     import requests
     import sounddevice as sd
     import main
+    from agent import Agent
 except ImportError as e:
     tk.Tk().withdraw()
     messagebox.showerror("第二の自分", f"必要なパッケージが入っていません。\n\n"
@@ -44,15 +45,13 @@ FONT_BIG = ("Yu Gothic UI", 18, "bold")
 FONT_CODE = ("Consolas", 10)
 
 EXAMPLES = [
-    "任せてた作業どうだった？",
-    "ダブルブッキングしてないか見て",
+    "予定を確認して、重なってたら調整案を作って",
+    "明日の朝8時に発表会の準備をするよう知らせて",
     "毎朝9時にディスクの空き容量を記録しといて",
-    "メッセージに参加できると返事して",
+    "任せてた作業どうだった？",
 ]
 
-INTENT_LABELS = {"tool": "ツールを作って実行します", "reply": "返信の下書きを作ります",
-                 "schedule": "予定の重なりを確認します", "delegate": "作業をお任せで引き受けます",
-                 "report": "お任せした作業の結果を報告します"}
+MONITOR_MINUTES = 15  # 自分から見回る間隔
 
 OLLAMA_APP = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama app.exe")
 
@@ -105,7 +104,7 @@ class QueueWriter:
         self.q = q
 
     def write(self, text):
-        self.q.put(text.replace("[AI] ", ""))
+        self.q.put((text.replace("[AI] ", ""), None))
 
     def flush(self):
         pass
@@ -118,6 +117,8 @@ class App:
         self.recorder = Recorder()
         self.mic = has_microphone()
         self.busy, self.busy_text = False, ""
+        self.agent = None
+        self.voice = tk.BooleanVar(value=True)
         self.dots = 0
 
         root.title("第二の自分")
@@ -132,10 +133,12 @@ class App:
         tk.Label(header, text="第二の自分", font=FONT_BIG, bg=BG).pack(side="left")
         tools = tk.Frame(header, bg=BG)
         tools.pack(side="right")
-        tk.Label(root, text="「〜しといて」と頼むと、休んでいる間に代わりにこなします",
+        tk.Label(root, text="あなたの代わりに考えて動くAIエージェント。「〜しといて」と頼むと、休んでいる間にこなします",
                  font=FONT_SMALL, bg=BG, fg="#555", anchor="w").pack(fill="x", padx=16)
-        for text, command in (("👤 自分の情報", self.open_profile), ("📅 予定を読み込む", self.open_calendar),
-                              ("📋 お任せ一覧", self.open_tasks)):
+        tk.Checkbutton(tools, text="🔊 声で返事", variable=self.voice, font=FONT_SMALL, bg=BG,
+                       activebackground=BG, cursor="hand2").pack(side="left", padx=3)
+        for text, command in (("🧹 新しい会話", self.new_conversation), ("👤 自分の情報", self.open_profile),
+                              ("📅 予定を読み込む", self.open_calendar), ("📋 お任せ一覧", self.open_tasks)):
             tk.Button(tools, text=text, command=command, font=FONT_SMALL, relief="groove", bg="white",
                       cursor="hand2", padx=8).pack(side="left", padx=3)
 
@@ -168,6 +171,10 @@ class App:
         self.log.tag_config("you", foreground=BLUE, font=(FONT[0], FONT[1], "bold"), spacing1=10)
         self.log.tag_config("note", foreground="#888")
         self.log.tag_config("warn", foreground=RED)
+        self.log.tag_config("ai", foreground="#1c1c1c", font=(FONT[0], FONT[1]), lmargin1=0, spacing1=6)
+        self.log.tag_config("plan", foreground="#5e3c99", font=FONT_SMALL)
+        self.log.tag_config("tool", foreground="#26a269", font=FONT_SMALL)
+        self.log.tag_config("alert", foreground="#c64600", font=(FONT[0], FONT[1], "bold"), spacing1=8)
 
         main.VERBOSE = False
         sys.stdout = sys.stderr = QueueWriter(self.log_queue)
@@ -198,6 +205,11 @@ class App:
                 time.sleep(1)
         if not ollama_running():
             print("⚠ AI（Ollama）を起動できませんでした。スタートメニューから「Ollama」を起動してください。\n")
+        self.agent = Agent(on_tool=lambda label: self.log_queue.put((f"   🔧 {label}...\n", "tool")),
+                           on_plan=self.show_plan)
+        if self.agent.history:
+            self.log_queue.put(("前回の会話を覚えています。続きから話せます（忘れさせるときは「🧹 新しい会話」）。\n", "note"))
+        self.root.after(60 * 1000, self.monitor)
         if self.mic:
             main.WHISPER = main.WhisperModel(main.WHISPER_MODEL, device="cpu", compute_type="int8")
         self.root.after(0, lambda: self.set_busy(False))
@@ -213,17 +225,18 @@ class App:
 
     def poll_log(self):
         while not self.log_queue.empty():
-            text = self.log_queue.get()
-            self.say(text, "warn" if text.startswith("⚠") else None)
+            text, tag = self.log_queue.get()
+            self.say(text, tag or ("warn" if text.startswith("⚠") else None))
         if self.busy:  # 考え中は「...」を動かして、止まっていないことを伝える
             self.dots = (self.dots + 1) % 4
             self.status.config(text=self.busy_text + "." * self.dots)
         self.root.after(300 if self.busy else 100, self.poll_log)
 
     def ready_text(self):
+        brain = f"（頭脳: {self.agent.model}）" if self.agent else ""
         if main.WHISPER is not None:
-            return "準備できました。文字で入力するか「🎤 話す」で声で頼めます"
-        return "準備できました（マイクが見つからないため文字入力で使えます）"
+            return f"準備できました。文字で入力するか「🎤 話す」で声で頼めます{brain}"
+        return f"準備できました。マイクが見つからないため文字入力で使えます{brain}"
 
     def fill(self, text):
         self.entry.delete(0, "end")
@@ -274,9 +287,10 @@ class App:
 
         def work():
             try:
-                info = main.classify(text)
-                print(f"→ {INTENT_LABELS[info['intent']]}\n")
-                main.HANDLERS[info["intent"]](text, info)
+                answer = self.agent.run(text)
+                self.log_queue.put((f"🤖 {answer}\n", "ai"))
+                if self.voice.get():
+                    main.speak(answer)
             except requests.RequestException:
                 print("⚠ AI（Ollama）に接続できません。スタートメニューから「Ollama」を起動してください。\n")
             except Exception as e:
@@ -284,6 +298,37 @@ class App:
             finally:
                 self.root.after(0, lambda: self.set_busy(False))
         threading.Thread(target=work, daemon=True).start()
+
+    def show_plan(self, steps):
+        lines = "".join(f"   {i}. {step}\n" for i, step in enumerate(steps, 1))
+        self.log_queue.put((f"📝 やることを考えました:\n{lines}", "plan"))
+
+    def new_conversation(self):
+        if self.agent and messagebox.askyesno("新しい会話", "これまでの会話を忘れて、新しく始めますか？", parent=self.root):
+            self.agent.forget()
+            self.log.config(state="normal")
+            self.log.delete("1.0", "end")
+            self.log.config(state="disabled")
+            self.say("新しい会話を始めます。ご用件をどうぞ。\n", "note")
+
+    # ============================================================
+    # 自分から気づいて知らせる
+    # ============================================================
+    def monitor(self):
+        """予定とお任せ作業を見回り、気づいたことを通知・読み上げる"""
+        def work():
+            try:
+                alerts = self.agent.check_alerts()
+            except Exception:
+                alerts = []
+            for title, body in alerts:
+                main.notify(title, body)
+                self.log_queue.put((f"\n🔔 {body}\n", "alert"))
+            if alerts and self.voice.get():
+                main.speak("。".join(body for _, body in alerts))
+        if not self.busy:
+            threading.Thread(target=work, daemon=True).start()
+        self.root.after(MONITOR_MINUTES * 60 * 1000, self.monitor)
 
     # ============================================================
     # main.py から呼ばれる確認・質問（作業スレッドから画面スレッドに頼む）

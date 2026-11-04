@@ -3,18 +3,12 @@
 構成（system_architecture_concept.md に準拠）:
   [ユーザーの音声指示]
    1. Whisper による文字起こし         -> transcribe()
-   2. Ollama（ローカルLLM）            -> classify() で要望を振り分け、各機能で生成
+   2. Ollama（ローカルLLM）            -> agent.py のエージェントが手順を考え、道具を順に使う
+                                          （コード生成・返信・調整案などの生成はこのファイル）
    3. Python 連携コア                  -> extract_code() / save_code() / save_text()
-   4. PowerShell 自動実行              -> run_with_powershell() / open_draft() / delegate()
+   4. PowerShell 自動実行              -> run_ps() / delegate() / open_draft() / notify() / speak()
 
-できること（classify() の intent）:
-  tool      PowerShellツール / Webサイトを作って目の前で実行する
-  reply     クリップボードのメール・チャットに、自分らしい返信の下書きを作る
-  schedule  カレンダー（.ics）のダブルブッキングを検出し、調整案を作る
-  delegate  「〜しといて」と任された作業を、休んでいる間に実行する
-            （今すぐバックグラウンド / 指定時刻に1回 / 毎日・毎週）
-  report    任されていた作業の結果を報告する
-
+このファイルはエージェントが使う「道具」の中身。会話・判断は agent.py、画面は gui.py。
 すべてローカルで完結し、外部APIには一切データを送信しない。
 """
 
@@ -44,6 +38,7 @@ OUTPUT_DIR = "./my_powershell_tools"
 HISTORY_FILE = os.path.join(OUTPUT_DIR, "history.jsonl")
 CONFIRM_BEFORE_RUN = True            # 生成コードを実行前に確認する（False で即時実行）
 BROWSER = "chrome"                   # 作ったWebサイトを開くブラウザ（chrome / msedge / firefox）
+NUM_CTX = 8192                       # LLMが一度に読める文章の量（標準の4096では足りないため）
 VERBOSE = True                       # 生成したコードや保存先などの詳細を表示する（画面版では False）
 
 # --- パーソナルデータ（GitHubには上げない） ---
@@ -114,7 +109,8 @@ def progress(text):
 
 def ask_ollama(system, prompt, json_mode=False, model=MODEL_NAME):
     """Ollama に問い合わせて応答テキストを返す（モデルが未取得なら MODEL_NAME で代用）"""
-    payload = {"model": model, "system": system, "prompt": prompt, "stream": False}
+    payload = {"model": model, "system": system, "prompt": prompt, "stream": False,
+               "options": {"num_ctx": NUM_CTX}}
     if json_mode:
         payload["format"] = "json"
     r = requests.post(f"{OLLAMA_BASE}/api/generate", json=payload, timeout=600)
@@ -145,36 +141,6 @@ def load_profile():
         return ""
     with open(PROFILE_FILE, encoding="utf-8") as f:
         return f.read().strip()
-
-
-INTENT_PROMPT = """ユーザーの要望を次のどれかに分類し、JSONだけを出力してください。
-- "tool": PowerShellツールやWebサイトを作って、今すぐ目の前で実行してほしい
-- "reply": 届いたメール・チャットへの返信を考えてほしい
-- "schedule": 予定の重複（ダブルブッキング）を確認・調整してほしい
-- "delegate": 作業を任せたい（「〜しといて」「休んでいる間に」「〜時に」「毎朝」など、本人がいなくても進めてほしい）
-- "report": 任せておいた作業の結果を知りたい（「どうだった？」「終わった？」など）
-
-出力形式:
-{"intent": "tool|reply|schedule|delegate|report",
- "task": "任せたい作業の内容（delegateのみ。日時の表現は除く）",
- "frequency": "now（今すぐ）/ once（指定時刻に1回）/ daily / weekly（delegateのみ）",
- "time": "once なら YYYY-MM-DD HH:MM、daily/weekly なら HH:MM（24時間表記。now なら空）",
- "day": "Monday〜Sunday（weeklyのみ）"}"""
-
-INTENTS = ("tool", "reply", "schedule", "delegate", "report")
-
-
-def classify(user_request):
-    """要望がどの機能に当たるかを Ollama に判定させる"""
-    # 「1時間後に」などを絶対時刻に直せるよう、現在時刻を渡す
-    prompt = f"現在日時: {datetime.now():%Y-%m-%d %H:%M (%A)}\nユーザーの要望: {user_request}"
-    try:
-        info = json.loads(ask_ollama(INTENT_PROMPT, prompt, json_mode=True))
-    except json.JSONDecodeError:
-        info = {}
-    if info.get("intent") not in INTENTS:
-        info["intent"] = "tool"
-    return info
 
 
 # --- tool: コード生成 ---
@@ -421,11 +387,6 @@ def generate_reschedule_body(move, slots):
 
 
 # --- report: お任せした作業の結果報告 ---
-REPORT_PROMPT = """あなたはユーザー本人の「第二の自分」です。
-ユーザーが休んでいる間に任されていた作業について、結果を短く報告してください。
-各作業の「状態」は事実なので、そのまま伝えること（推測で書き換えない）。
-ログに内容があれば何が行われたかを一言で要約し、エラーがあれば原因の見当と次にやることを添えること。"""
-
 NEVER_RUN = 267011  # タスクスケジューラの「まだ一度も実行されていない」
 
 
@@ -444,21 +405,6 @@ def task_status(entry, has_log):
     if int(code) == 0:
         return f"成功（最終実行 {last_run}{next_info}）"
     return f"エラー（終了コード {code}、最終実行 {last_run}{next_info}）"
-
-
-def generate_report(entries):
-    """お任せ作業の実行状況とログから、結果の報告を作る"""
-    parts = []
-    for e in entries:
-        log = ""
-        if os.path.exists(e["log"]):
-            with open(e["log"], encoding="utf-8", errors="replace") as f:
-                log = f.read()[-2000:]  # 長いログは末尾だけ
-        parts.append(f"■ 作業: {e['task']}（{e['when']}、{e['registered_at']} に依頼）\n"
-                     f"状態: {task_status(e, bool(log))}\n"
-                     f"ログ:\n{log or '（なし）'}")
-    progress(f"{TEXT_MODEL} で結果をまとめ中...")
-    return ask_ollama(REPORT_PROMPT, "\n\n".join(parts), model=TEXT_MODEL).strip()
 
 
 # ============================================================
@@ -516,11 +462,12 @@ def ps_quote(text):
     return "'" + text.replace("'", "''") + "'"
 
 
-def run_ps(script):
+def run_ps(script, timeout=None):
     """PowerShell スクリプトをこのコンソールで実行し、結果を返す"""
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
-    return subprocess.run(["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
 
 
 def confirm(question, code=None):
@@ -563,6 +510,47 @@ def open_draft(path, copy=False):
     run_ps(script)
 
 
+APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+
+
+def toast_script(title, body):
+    """Windows の通知を出す PowerShell スクリプト"""
+    return ("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
+            "$x = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent("
+            "[Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+            "$t = $x.GetElementsByTagName('text'); "
+            f"$t.Item(0).AppendChild($x.CreateTextNode({ps_quote(title)})) | Out-Null; "
+            f"$t.Item(1).AppendChild($x.CreateTextNode({ps_quote(body)})) | Out-Null; "
+            "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("
+            f"{ps_quote(APP_ID)}).Show([Windows.UI.Notifications.ToastNotification]::new($x))")
+
+
+def notify(title, body):
+    """Windows の通知（画面右下）でお知らせする"""
+    run_ps(toast_script(title, body))
+
+
+def speak_script(text):
+    """日本語の音声で読み上げる PowerShell スクリプト（Windows標準の音声合成）"""
+    return ("Add-Type -AssemblyName System.Speech; "
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            "try { $s.SelectVoiceByHints('NotSet', 'NotSet', 0, [Globalization.CultureInfo]'ja-JP') } catch {}; "
+            f"$s.Speak({ps_quote(text)})")
+
+
+_speaker = None
+
+
+def speak(text):
+    """AIの返事を声で読み上げる（前の読み上げが続いていれば止めてから）"""
+    global _speaker
+    if _speaker and _speaker.poll() is None:
+        _speaker.terminate()
+    encoded = base64.b64encode(speak_script(text).encode("utf-16-le")).decode()
+    _speaker = subprocess.Popen(["powershell.exe", "-NoProfile", "-EncodedCommand", encoded],
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+
+
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 DELEGATED_FILE = os.path.join(OUTPUT_DIR, "delegated.jsonl")
 
@@ -580,7 +568,12 @@ def schedule_trigger(info):
         try:
             run_at = datetime.strptime(at, "%Y-%m-%d %H:%M")
         except ValueError:
-            return "invalid", at
+            if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", at):
+                return "invalid", at
+            # 時刻だけなら、次に来るその時刻（今日がもう過ぎていれば明日）
+            run_at = datetime.combine(datetime.now().date(), datetime.strptime(at, "%H:%M").time())
+            if run_at <= datetime.now():
+                run_at += timedelta(days=1)
         if run_at > datetime.now():
             return f"New-ScheduledTaskTrigger -Once -At {ps_quote(f'{run_at:%Y-%m-%d %H:%M}')}", f"{run_at:%m/%d %H:%M} に1回"
     return None, "今すぐ（バックグラウンド）"
@@ -590,8 +583,7 @@ def delegate(path, info):
     """生成したスクリプトを、本人がいなくても動くように実行・登録する"""
     trigger, when = schedule_trigger(info)
     if trigger == "invalid":
-        print(f"[AI] 実行する日時（{when or '未指定'}）が分かりませんでした。「毎朝9時に」「1時間後に」のように指定してください。")
-        return
+        return f"実行する日時（{when or '未指定'}）が分かりませんでした。"
     log = os.path.splitext(path)[0] + ".log"
     # 実行結果はログファイルに追記し、休んでいる間に何が起きたか後から報告できるようにする
     command = f"& {ps_quote(path)} *>> {ps_quote(log)}"
@@ -610,63 +602,36 @@ def delegate(path, info):
                   f"-Description {ps_quote(info.get('task', ''))} | Out-Null")
         result = run_ps(script)
         if result.returncode != 0:
-            print(f"[AI] 登録に失敗しました:\n{result.stderr.strip()}")
-            return
+            return f"登録に失敗しました: {result.stderr.strip()}"
 
     with open(DELEGATED_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps({"task": info.get("task", ""), "when": when, "task_name": name,
                             "path": path, "log": log,
                             "registered_at": f"{datetime.now():%Y-%m-%d %H:%M}"},
                            ensure_ascii=False) + "\n")
-    print(f"[AI] お任せください。{when} に実行します。")
     if VERBOSE:
-        print(f"     タスク名: {name}  ログ: {log}")
-    print("     結果は「どうだった？」と聞けば報告します。")
+        print(f"[AI] タスク名: {name}  ログ: {log}")
+    return f"{when} に実行するよう登録しました（タスク名: {name}）"
 
 
 # ============================================================
-# 各機能（2 → 3 → 4 の流れ）
+# ダブルブッキングの調整（エージェントの道具 plan_double_booking から使う）
 # ============================================================
-def handle_tool(user_request, info):
-    raw = generate_code(user_request, search_history(user_request))
-    lang, code = extract_code(raw)
-    path = save_code(lang, code)
-    save_history(user_request, lang, code)
-    run_with_powershell(lang, path, code)
-
-
-def handle_reply(user_request, info):
-    message = read_clipboard()
-    if not message:
-        print("[AI] 返信したいメッセージがありません。メッセージをコピーしてから、もう一度お願いします。")
-        return
-    print(f"[AI] クリップボードのメッセージに返信します:\n{message[:200]}")
-    to = ask_user("返信の宛先の名前は？")
-    draft = compose_letter(to, generate_reply(user_request, message))
-    path = save_text("reply", "txt", draft)
-    open_draft(path, copy=True)
-    print("[AI] 下書きをメモ帳で開き、クリップボードにコピーしました。確認してから送信してください。")
-
-
-def handle_schedule(user_request, info):
+def plan_double_booking():
+    """重なった予定ごとに優先を決め、連絡文の下書きを作ってメモ帳で開く。結果の要約を返す"""
     if not glob.glob(os.path.join(CALENDAR_DIR, "*.ics")):
-        print(f"[AI] カレンダーがありません。Google/Outlook から書き出した .ics を {os.path.abspath(CALENDAR_DIR)} に置いてください。")
-        return
+        return "カレンダーが読み込まれていません。「予定を読み込む」から .ics ファイルを読み込んでください。"
     events = load_events()
     conflicts = find_conflicts(events)
     if not conflicts:
-        print(f"[AI] 今後{SCHEDULE_DAYS}日間にダブルブッキングはありません（予定 {len(events)} 件）。")
-        return
-    print(f"[AI] ダブルブッキングが {len(conflicts)} 件見つかりました:")
-    for a, b in conflicts:
-        print(f"  ・{format_event(a)}\n    {format_event(b)}")
+        return f"今後{SCHEDULE_DAYS}日間にダブルブッキングはありません（予定 {len(events)} 件）。"
 
     slots = free_slots(events)
-    sections = []
+    sections, summary = [], []
     for a, b in conflicts:
         d = generate_schedule_decision(events, a, b, slots)
         keep, move = (a, b) if d["keep"] == "A" else (b, a)
-        print(f"[AI] 「{keep['title']}」を優先し、「{move['title']}」を{d.get('action', 'リスケ')}する案です。")
+        summary.append(f"- 「{keep['title']}」を優先し、「{move['title']}」を{d.get('action', 'リスケ')}する案")
         to = ask_user(f"「{move['title']}」の連絡相手の名前は？")
         letter = compose_letter(to, generate_reschedule_body(move, d["slots"]))
         sections.append("\n".join([
@@ -677,22 +642,7 @@ def handle_schedule(user_request, info):
             "- **連絡文の下書き**:", "", "```", letter, "```"]))
     path = save_text("schedule", "md", "\n\n".join(sections))
     open_draft(path)
-
-
-def handle_delegate(user_request, info):
-    task = info.get("task") or user_request
-    info["task"] = task
-    lang, code = extract_code(generate_code(task, search_history(task)))
-    if lang != "powershell":
-        print("[AI] お任せできるのは PowerShell で自動化できる作業だけです。")
-        return
-    path = save_code(lang, code)
-    save_history(task, lang, code)
-    # 確認はここで1回だけ。この後は本人がいなくても止まらずに動く
-    if confirm("この作業をお任せしますか？", code):
-        delegate(path, info)
-    else:
-        print("[AI] お任せを取りやめました（ファイルは保存済みです）。")
+    return "調整案と連絡文の下書きを作り、メモ帳で開きました。\n" + "\n".join(summary)
 
 
 def load_delegated():
@@ -712,46 +662,34 @@ def cancel_delegated(entry):
         f.writelines(json.dumps(e, ensure_ascii=False) + "\n" for e in rest)
 
 
-def handle_report(user_request, info):
-    entries = load_delegated()[-10:]  # 直近10件
-    if not entries:
-        print("[AI] まだ何もお任せされていません。")
-        return
-    print(generate_report(entries))
-
-
-HANDLERS = {"tool": handle_tool, "reply": handle_reply, "schedule": handle_schedule,
-            "delegate": handle_delegate, "report": handle_report}
-
-
 # ============================================================
 def main():
-    # --text: マイクの代わりにキーボードで要望を入力する（Whisper を使わない）
+    """ターミナル版（--text でキーボード入力）。処理はエージェント（agent.py）が行う"""
+    from agent import Agent
+
     global WHISPER
     text_mode = "--text" in sys.argv
     if not text_mode:
         print("[AI] Whisper モデルを読み込み中...")
         WHISPER = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+    agent = Agent()
 
     while True:
         if text_mode:
-            user_request = input("\n[AI] ご用件をどうぞ（文字で入力）: ").strip()
+            user_request = input("\nあなた: ").strip()
         else:
             audio = record_voice()
             if audio is None:
                 continue
             user_request = transcribe(WHISPER, audio)
+        if user_request in ("終了", "exit", "quit"):
+            break
         if not user_request:
             continue
-
         try:
-            info = classify(user_request)
-            HANDLERS[info["intent"]](user_request, info)
+            print(f"\n第二の自分: {agent.run(user_request)}")
         except requests.RequestException as e:
             print(f"Ollama に接続できません（`ollama serve` が起動しているか確認してください）: {e}")
-
-        if input("\n[AI] 続けますか？ (y/n): ").strip().lower() != "y":
-            break
 
 
 if __name__ == "__main__":
