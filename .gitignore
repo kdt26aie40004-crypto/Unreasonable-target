@@ -1,3 +1,4 @@
-﻿my_powershell_tools/
+/my_powershell_tools/
 __pycache__/
-data/
+*.pyc
+/data/
