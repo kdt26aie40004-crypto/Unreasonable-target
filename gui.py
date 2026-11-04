@@ -1,7 +1,7 @@
-"""第二の自分 — 初心者向けの画面（「起動.bat」かデスクトップのショートカットで起動）
+"""第二の自分 — AIエージェントの画面（「起動.bat」かデスクトップのショートカットで起動）
 
-処理の中身は main.py の4段階構成（Whisper → Ollama → Python連携コア → PowerShell実行）をそのまま使い、
-この画面は入力・確認・設定・結果表示だけを担当する。
+処理の中身は main.py の4段階構成（Whisper → Ollama → Python連携コア → PowerShell実行）と
+agent.py のエージェントをそのまま使い、この画面は入力・確認・設定・表示・見回りだけを担当する。
 """
 
 import os
@@ -13,17 +13,12 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox
 
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-try:  # 高解像度の画面でも文字がぼやけないようにする
-    import ctypes
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except (AttributeError, OSError):
-    pass
-
 try:
+    import customtkinter as ctk
     import numpy as np
     import requests
     import sounddevice as sd
@@ -35,14 +30,20 @@ except ImportError as e:
                                       f"「pip install -r requirements.txt」を実行してください。\n\n({e})")
     sys.exit(1)
 
-BG = "#f5f6f8"
-BLUE = "#1a5fb4"
-RED = "#e01b24"
-GRAY = "#e0e0e0"
-FONT = ("Yu Gothic UI", 12)
-FONT_SMALL = ("Yu Gothic UI", 10)
-FONT_BIG = ("Yu Gothic UI", 18, "bold")
-FONT_CODE = ("Consolas", 10)
+# --- 色（ライト, ダーク） ---
+ACCENT = ("#6C5CE7", "#8B7CF6")
+ACCENT_HOVER = ("#5A4BD1", "#7A6AE8")
+BG = ("#F4F5FB", "#14151B")
+SURFACE = ("#FFFFFF", "#20212B")
+SIDEBAR = ("#ECEBFA", "#1A1B23")
+BORDER = ("#E3E3EE", "#2D2E3A")
+TEXT = ("#1E1E2A", "#ECECF1")
+MUTED = ("#6B6F80", "#9A9DB0")
+TOOL_BG, TOOL_FG = ("#E6F6EE", "#1B3A2B"), ("#1F7A4D", "#7EE2A8")
+PLAN_BG = ("#F0EDFF", "#272340")
+ALERT_BG, ALERT_FG = ("#FFF1E6", "#3A2A1E"), ("#B4530B", "#FFB27A")
+DANGER = ("#D92D20", "#FF7A70")
+READY, BUSY, OFF = "#22C55E", "#F59E0B", "#EF4444"
 
 EXAMPLES = [
     "予定を確認して、重なってたら調整案を作って",
@@ -52,8 +53,10 @@ EXAMPLES = [
 ]
 
 MONITOR_MINUTES = 15  # 自分から見回る間隔
-
 OLLAMA_APP = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama app.exe")
+FONT_FAMILY = "Yu Gothic UI"
+
+ctk.set_appearance_mode("System")
 
 
 def has_microphone():
@@ -72,10 +75,10 @@ def ollama_running():
         return False
 
 
-def button(parent, text, command, primary=False, **kw):
-    return tk.Button(parent, text=text, command=command, font=FONT, relief="flat", cursor="hand2",
-                     bg=BLUE if primary else GRAY, fg="white" if primary else "black",
-                     activebackground="#15498a" if primary else "#cfcfcf", padx=12, pady=2, **kw)
+def transcribe(audio):
+    """録音した音声をローカルの Whisper で文字にする"""
+    segments, _ = main.WHISPER.transcribe(audio, language="ja")
+    return "".join(s.text for s in segments).strip().rstrip("。、 ")
 
 
 class Recorder:
@@ -98,13 +101,17 @@ class Recorder:
 
 
 class QueueWriter:
-    """main.py の print を画面のログに流す"""
+    """main.py / agent.py の print を、1行ごとにまとめて画面に流す"""
 
     def __init__(self, q):
-        self.q = q
+        self.q, self.buffer = q, ""
 
     def write(self, text):
-        self.q.put((text.replace("[AI] ", ""), None))
+        self.buffer += text
+        if self.buffer.endswith("\n"):
+            chunk, self.buffer = self.buffer.strip("\n").replace("[AI] ", ""), ""
+            if chunk.strip():
+                self.q.put(("note", chunk))
 
     def flush(self):
         pass
@@ -113,90 +120,267 @@ class QueueWriter:
 class App:
     def __init__(self, root):
         self.root = root
-        self.log_queue = queue.Queue()
+        self.queue = queue.Queue()
         self.recorder = Recorder()
         self.mic = has_microphone()
-        self.busy, self.busy_text = False, ""
+        self.busy, self.busy_text, self.dots = False, "", 0
         self.agent = None
         self.voice = tk.BooleanVar(value=True)
-        self.dots = 0
+        self.plan_items, self.typing, self.wrapped = [], None, []
 
+        self.font = lambda size=14, weight="normal": ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
         root.title("第二の自分")
-        self.scale = root.winfo_fpixels("1i") / 96  # 画面の拡大率に合わせてウィンドウの大きさを決める
-        root.geometry(f"{int(860 * self.scale)}x{int(700 * self.scale)}")
-        root.minsize(int(600 * self.scale), int(500 * self.scale))
-        root.configure(bg=BG)
+        root.geometry("1120x760")
+        root.minsize(860, 600)
+        root.configure(fg_color=BG)
+        root.grid_columnconfigure(1, weight=1)
+        root.grid_rowconfigure(0, weight=1)
 
-        # --- 上: タイトルと設定ボタン ---
-        header = tk.Frame(root, bg=BG)
-        header.pack(fill="x", padx=16, pady=(12, 0))
-        tk.Label(header, text="第二の自分", font=FONT_BIG, bg=BG).pack(side="left")
-        tools = tk.Frame(header, bg=BG)
-        tools.pack(side="right")
-        tk.Label(root, text="あなたの代わりに考えて動くAIエージェント。「〜しといて」と頼むと、休んでいる間にこなします",
-                 font=FONT_SMALL, bg=BG, fg="#555", anchor="w").pack(fill="x", padx=16)
-        tk.Checkbutton(tools, text="🔊 声で返事", variable=self.voice, font=FONT_SMALL, bg=BG,
-                       activebackground=BG, cursor="hand2").pack(side="left", padx=3)
-        for text, command in (("🧹 新しい会話", self.new_conversation), ("👤 自分の情報", self.open_profile),
-                              ("📅 予定を読み込む", self.open_calendar), ("📋 お任せ一覧", self.open_tasks)):
-            tk.Button(tools, text=text, command=command, font=FONT_SMALL, relief="groove", bg="white",
-                      cursor="hand2", padx=8).pack(side="left", padx=3)
-
-        # --- 下: 入力欄（先に配置して、ウィンドウが小さくても隠れないようにする） ---
-        self.status = tk.Label(root, text="", font=FONT_SMALL, bg=BG, fg="#555", anchor="w")
-        self.status.pack(side="bottom", fill="x", padx=16, pady=(0, 10))
-
-        bar = tk.Frame(root, bg=BG)
-        bar.pack(side="bottom", fill="x", padx=16, pady=(4, 6))
-        self.entry = tk.Entry(bar, font=FONT, relief="solid", bd=1)
-        self.entry.pack(side="left", fill="x", expand=True, ipady=6)
-        self.entry.bind("<Return>", lambda _: self.send())
-        self.send_btn = button(bar, "送信", self.send, primary=True)
-        self.send_btn.pack(side="left", padx=(6, 0), fill="y")
-        self.mic_btn = button(bar, "🎤 話す", self.toggle_voice, state="disabled")
-        self.mic_btn.pack(side="left", padx=(6, 0), fill="y")
-
-        chips = tk.Frame(root, bg=BG)
-        chips.pack(side="bottom", fill="x", padx=16)
-        tk.Label(chips, text="例:", font=FONT_SMALL, bg=BG).grid(row=0, column=0, rowspan=2, sticky="n")
-        for i, text in enumerate(EXAMPLES):
-            tk.Button(chips, text=text, font=FONT_SMALL, relief="groove", bg="white", cursor="hand2",
-                      command=lambda t=text: self.fill(t)).grid(row=i // 2, column=1 + i % 2,
-                                                                 sticky="w", padx=3, pady=2)
-
-        # --- 中央: やりとりの表示 ---
-        self.log = scrolledtext.ScrolledText(root, font=FONT, wrap="word", state="disabled",
-                                             relief="flat", padx=14, pady=10, spacing1=2, spacing3=2)
-        self.log.pack(fill="both", expand=True, padx=16, pady=10)
-        self.log.tag_config("you", foreground=BLUE, font=(FONT[0], FONT[1], "bold"), spacing1=10)
-        self.log.tag_config("note", foreground="#888")
-        self.log.tag_config("warn", foreground=RED)
-        self.log.tag_config("ai", foreground="#1c1c1c", font=(FONT[0], FONT[1]), lmargin1=0, spacing1=6)
-        self.log.tag_config("plan", foreground="#5e3c99", font=FONT_SMALL)
-        self.log.tag_config("tool", foreground="#26a269", font=FONT_SMALL)
-        self.log.tag_config("alert", foreground="#c64600", font=(FONT[0], FONT[1], "bold"), spacing1=8)
+        self.build_sidebar()
+        self.build_chat()
 
         main.VERBOSE = False
-        sys.stdout = sys.stderr = QueueWriter(self.log_queue)
+        sys.stdout = sys.stderr = QueueWriter(self.queue)
         main.confirm = self.confirm
         main.ask_user = self.ask_user
         main.read_clipboard = self.ask_message
-        self.poll_log()
+        self.poll()
         self.startup()
+
+    # ============================================================
+    # 画面の組み立て
+    # ============================================================
+    def build_sidebar(self):
+        side = ctk.CTkFrame(self.root, width=250, corner_radius=0, fg_color=SIDEBAR)
+        side.grid(row=0, column=0, sticky="nsw")
+        side.grid_propagate(False)
+        side.grid_columnconfigure(0, weight=1)
+
+        self.circle(side, 72, 30).grid(row=0, column=0, pady=(32, 10))
+        ctk.CTkLabel(side, text="第二の自分", font=self.font(20, "bold"), text_color=TEXT).grid(row=1, column=0)
+        ctk.CTkLabel(side, text="あなたの代わりに考えて動く\nAIエージェント", font=self.font(12),
+                     text_color=MUTED, justify="center").grid(row=2, column=0, pady=(2, 10))
+
+        status = ctk.CTkFrame(side, fg_color=SURFACE, corner_radius=14)
+        status.grid(row=3, column=0, padx=18, pady=(4, 18), sticky="ew")
+        self.status_dot = ctk.CTkLabel(status, text="●", font=self.font(14), text_color=BUSY, width=16)
+        self.status_dot.pack(side="left", padx=(12, 4), pady=8)
+        self.status_label = ctk.CTkLabel(status, text="準備中です", font=self.font(12), text_color=TEXT,
+                                         anchor="w")
+        self.status_label.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        for row, (text, command) in enumerate((("＋  新しい会話", self.new_conversation),
+                                               ("👤  自分の情報", self.open_profile),
+                                               ("📅  予定を読み込む", self.open_calendar),
+                                               ("📋  お任せ一覧", self.open_tasks)), start=4):
+            ctk.CTkButton(side, text=text, command=command, anchor="w", height=40, corner_radius=12,
+                          font=self.font(14), fg_color="transparent", text_color=TEXT,
+                          hover_color=SURFACE).grid(row=row, column=0, padx=14, pady=2, sticky="ew")
+
+        side.grid_rowconfigure(8, weight=1)
+        bottom = ctk.CTkFrame(side, fg_color="transparent")
+        bottom.grid(row=9, column=0, padx=18, pady=18, sticky="ew")
+        ctk.CTkSwitch(bottom, text="声で返事", variable=self.voice, font=self.font(13), text_color=TEXT,
+                      progress_color=ACCENT).pack(anchor="w", pady=(0, 12))
+        ctk.CTkLabel(bottom, text="テーマ", font=self.font(11), text_color=MUTED).pack(anchor="w")
+        theme = ctk.CTkSegmentedButton(bottom, values=["自動", "ライト", "ダーク"], font=self.font(12),
+                                       selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
+                                       command=lambda v: ctk.set_appearance_mode(
+                                           {"自動": "System", "ライト": "Light", "ダーク": "Dark"}[v]))
+        theme.set("自動")
+        theme.pack(fill="x", pady=(2, 12))
+        self.brain_label = ctk.CTkLabel(bottom, text="", font=self.font(11), text_color=MUTED, anchor="w")
+        self.brain_label.pack(anchor="w")
+
+    def build_chat(self):
+        area = ctk.CTkFrame(self.root, fg_color="transparent")
+        area.grid(row=0, column=1, sticky="nsew")
+        area.grid_columnconfigure(0, weight=1)
+        area.grid_rowconfigure(0, weight=1)
+
+        self.chat = ctk.CTkScrollableFrame(area, fg_color="transparent")
+        self.chat.grid(row=0, column=0, sticky="nsew", padx=(16, 8), pady=(16, 0))
+        self.chat.bind("<Configure>", lambda e: self.rewrap(e.width))
+
+        chips = ctk.CTkFrame(area, fg_color="transparent")
+        chips.grid(row=1, column=0, sticky="ew", padx=28, pady=(8, 4))
+        for i, text in enumerate(EXAMPLES):
+            ctk.CTkButton(chips, text=text, command=lambda t=text: self.fill(t), height=30, corner_radius=15,
+                          font=self.font(12), fg_color=SURFACE, text_color=TEXT, hover_color=PLAN_BG,
+                          border_width=1, border_color=BORDER).grid(row=i // 2, column=i % 2, padx=4, pady=3,
+                                                                    sticky="w")
+
+        composer = ctk.CTkFrame(area, fg_color=SURFACE, corner_radius=26, border_width=1, border_color=BORDER)
+        composer.grid(row=2, column=0, sticky="ew", padx=24, pady=(4, 20))
+        composer.grid_columnconfigure(0, weight=1)
+        self.entry = ctk.CTkEntry(composer, height=48, border_width=0, fg_color="transparent",
+                                  font=self.font(15), text_color=TEXT,
+                                  placeholder_text="頼みたいことを入力…（例: 〜しといて）")
+        self.entry.grid(row=0, column=0, sticky="ew", padx=(20, 6), pady=6)
+        self.entry.bind("<Return>", lambda _: self.send())
+        self.mic_btn = ctk.CTkButton(composer, text="🎤", width=44, height=44, corner_radius=22,
+                                     font=self.font(18), fg_color=BG, text_color=TEXT, hover_color=BORDER,
+                                     command=self.toggle_voice, state="disabled")
+        self.mic_btn.grid(row=0, column=1, padx=4)
+        self.send_btn = ctk.CTkButton(composer, text="➤", width=44, height=44, corner_radius=22,
+                                      font=self.font(18, "bold"), fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                      command=self.send)
+        self.send_btn.grid(row=0, column=2, padx=(4, 8))
+
+    # ============================================================
+    # チャットの表示（吹き出し）
+    # ============================================================
+    def rewrap(self, width):
+        for label, ratio in self.wrapped:
+            if label.winfo_exists():
+                label.configure(wraplength=max(260, int(width * ratio)))
+
+    def scroll_down(self):
+        self.root.after(50, lambda: self.chat._parent_canvas.yview_moveto(1.0))
+
+    def row(self):
+        frame = ctk.CTkFrame(self.chat, fg_color="transparent")
+        frame.pack(fill="x", padx=8, pady=5)
+        return frame
+
+    def label(self, parent, text, ratio=0.62, **kw):
+        kw.setdefault("font", self.font(14))
+        kw.setdefault("text_color", TEXT)
+        lbl = ctk.CTkLabel(parent, text=text, justify="left", anchor="w",
+                           wraplength=max(260, int(self.chat.winfo_width() * ratio)), **kw)
+        self.wrapped.append((lbl, ratio))
+        return lbl
+
+    def circle(self, parent, size, font_size):
+        """アバター（大きさを固定した枠の中に文字を置き、正円にする）"""
+        frame = ctk.CTkFrame(parent, width=size, height=size, corner_radius=size // 2, fg_color=ACCENT)
+        frame.pack_propagate(False)
+        frame.grid_propagate(False)
+        ctk.CTkLabel(frame, text="自", text_color="white", font=self.font(font_size, "bold"),
+                     fg_color="transparent").place(relx=0.5, rely=0.5, anchor="center")
+        return frame
+
+    def avatar(self, parent):
+        self.circle(parent, 34, 14).pack(side="left", anchor="n", padx=(0, 10))
+
+    def bubble_user(self, text):
+        bubble = ctk.CTkFrame(self.row(), fg_color=ACCENT, corner_radius=18)
+        bubble.pack(side="right")
+        self.label(bubble, text, ratio=0.55, text_color="white").pack(padx=16, pady=10)
+
+    def bubble_ai(self, text):
+        row = self.row()
+        self.avatar(row)
+        bubble = ctk.CTkFrame(row, fg_color=SURFACE, corner_radius=18, border_width=1, border_color=BORDER)
+        bubble.pack(side="left")
+        self.label(bubble, text).pack(padx=16, pady=10)
+
+    def show_plan_card(self, steps):
+        row = self.row()
+        card = ctk.CTkFrame(row, fg_color=PLAN_BG, corner_radius=16)
+        card.pack(side="left", padx=(44, 0))
+        ctk.CTkLabel(card, text="📝  やることを考えました", font=self.font(13, "bold"),
+                     text_color=ACCENT).pack(anchor="w", padx=16, pady=(10, 4))
+        self.plan_items = []
+        # 「(get_schedule)」のような道具の名前は、画面には出さない
+        steps = [re.sub(r"\s*[(（][^()（）]*[a-z]+_[a-z_]+[^()（）]*[)）]", "", s).strip() or s for s in steps]
+        for i, step in enumerate(steps, 1):
+            item = self.label(card, f"○  {i}. {step}", ratio=0.55, font=self.font(13))
+            item.pack(anchor="w", padx=16, pady=1)
+            self.plan_items.append([item, f"{i}. {step}", False])
+        ctk.CTkFrame(card, height=8, fg_color="transparent").pack()
+
+    def show_tool(self, label):
+        for item in self.plan_items:  # やることリストの次の項目にチェックを付ける
+            if not item[2]:
+                item[0].configure(text=f"✓  {item[1]}", text_color=TOOL_FG)
+                item[2] = True
+                break
+        pill = ctk.CTkLabel(self.row(), text=f"🔧  {label}…", font=self.font(12), text_color=TOOL_FG,
+                            fg_color=TOOL_BG, corner_radius=12)
+        pill.pack(side="left", padx=(44, 0), ipadx=10, ipady=2)
+
+    def show_note(self, text):
+        if text.count("\n") >= 3:  # 実行結果や下書きは、等幅のカードで見やすく
+            card = ctk.CTkFrame(self.row(), fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+            card.pack(side="left", padx=(44, 0), fill="x", expand=True)
+            self.label(card, text, ratio=0.7, font=ctk.CTkFont(family="Consolas", size=12),
+                       text_color=MUTED).pack(anchor="w", padx=14, pady=10)
+            return
+        color = DANGER if text.startswith("⚠") else MUTED
+        self.label(self.row(), text, ratio=0.7, font=self.font(12), text_color=color).pack(
+            side="left", padx=(44, 0))
+
+    def show_alert(self, text):
+        card = ctk.CTkFrame(self.row(), fg_color=ALERT_BG, corner_radius=16)
+        card.pack(side="left", padx=(44, 0))
+        self.label(card, f"🔔  {text}", font=self.font(14, "bold"), text_color=ALERT_FG).pack(padx=16, pady=10)
+
+    def show_typing(self, show):
+        if show and self.typing is None:
+            row = self.row()
+            self.avatar(row)
+            self.typing = ctk.CTkLabel(row, text="", font=self.font(13), text_color=MUTED, fg_color=SURFACE,
+                                       corner_radius=16)
+            self.typing.pack(side="left", ipadx=14, ipady=6)
+            self.typing_row = row
+        elif not show and self.typing is not None:
+            self.typing_row.destroy()
+            self.typing = None
+
+    def poll(self):
+        items = []
+        while not self.queue.empty():
+            items.append(self.queue.get())
+        if items:
+            typing = self.typing is not None
+            self.show_typing(False)  # 「考え中」は常に最後に表示する
+            for kind, payload in items:
+                {"user": self.bubble_user, "ai": self.bubble_ai, "plan": self.show_plan_card,
+                 "tool": self.show_tool, "note": self.show_note, "alert": self.show_alert}[kind](payload)
+            self.show_typing(typing and self.busy)
+            self.scroll_down()
+        if self.busy:  # 考え中は「●」を動かして、止まっていないことを伝える
+            self.dots = (self.dots + 1) % 3
+            dots = "".join("●" if i == self.dots else "○" for i in range(3))
+            if self.typing is not None:
+                self.typing.configure(text=f"{self.busy_text}  {dots}")
+        self.root.after(350 if self.busy else 100, self.poll)
+
+    def set_status(self, text, color):
+        self.status_label.configure(text=text)
+        self.status_dot.configure(text_color=color)
+
+    def set_busy(self, busy, text="考え中"):
+        self.busy, self.busy_text = busy, text
+        self.send_btn.configure(state="disabled" if busy else "normal")
+        self.mic_btn.configure(state="normal" if not busy and main.WHISPER is not None else "disabled")
+        self.show_typing(busy and self.agent is not None)
+        if busy:
+            self.set_status(f"{text}…", BUSY)
+        else:
+            self.set_status("準備できました" if self.agent else "AIに接続できません",
+                            READY if self.agent else OFF)
+            self.plan_items = [[lbl, t, True] for lbl, t, done in self.plan_items]  # 残りの手順は付け替えない
+
+    def fill(self, text):
+        self.entry.delete(0, "end")
+        self.entry.insert(0, text)
+        self.entry.focus_set()
 
     # ============================================================
     # 起動時
     # ============================================================
     def startup(self):
-        self.say("こんにちは。下の欄に頼みたいことを書いて「送信」を押してください。\n"
-                 "「例」のボタンを押すと、入力欄に例文が入ります。\n", "note")
-        self.set_busy(True, "準備中です")
+        self.queue.put(("ai", "こんにちは、第二の自分です。頼みたいことを下の欄に入力してください。\n"
+                              "「〜しといて」と頼めば、あなたが休んでいる間にこなしておきます。"))
+        self.set_busy(True, "準備中")
         threading.Thread(target=self.prepare, daemon=True).start()
         if not os.path.exists(main.PROFILE_FILE):
-            self.root.after(500, lambda: self.open_profile(first=True))
+            self.root.after(800, lambda: self.open_profile(first=True))
 
     def prepare(self):
-        """Ollama が止まっていれば起動し、マイクがあれば音声認識を読み込む"""
+        """Ollama が止まっていれば起動し、エージェントと音声認識を準備する"""
         if not ollama_running() and os.path.exists(OLLAMA_APP):
             subprocess.Popen([OLLAMA_APP])
             for _ in range(30):
@@ -204,59 +388,25 @@ class App:
                     break
                 time.sleep(1)
         if not ollama_running():
-            print("⚠ AI（Ollama）を起動できませんでした。スタートメニューから「Ollama」を起動してください。\n")
-        self.agent = Agent(on_tool=lambda label: self.log_queue.put((f"   🔧 {label}...\n", "tool")),
-                           on_plan=self.show_plan)
-        if self.agent.history:
-            self.log_queue.put(("前回の会話を覚えています。続きから話せます（忘れさせるときは「🧹 新しい会話」）。\n", "note"))
-        self.root.after(60 * 1000, self.monitor)
+            print("⚠ AI（Ollama）を起動できませんでした。スタートメニューから「Ollama」を起動してください。")
+        else:
+            self.agent = Agent(on_tool=lambda label: self.queue.put(("tool", label)),
+                               on_plan=lambda steps: self.queue.put(("plan", steps)))
+            if self.agent.history:
+                print("前回の会話を覚えています。続きから話せます（忘れさせるときは「＋ 新しい会話」）。")
+            self.root.after(60 * 1000, self.monitor)
         if self.mic:
             main.WHISPER = main.WhisperModel(main.WHISPER_MODEL, device="cpu", compute_type="int8")
-        self.root.after(0, lambda: self.set_busy(False))
-
-    # ============================================================
-    # 表示
-    # ============================================================
-    def say(self, text, tag=None):
-        self.log.config(state="normal")
-        self.log.insert("end", text, tag)
-        self.log.see("end")
-        self.log.config(state="disabled")
-
-    def poll_log(self):
-        while not self.log_queue.empty():
-            text, tag = self.log_queue.get()
-            self.say(text, tag or ("warn" if text.startswith("⚠") else None))
-        if self.busy:  # 考え中は「...」を動かして、止まっていないことを伝える
-            self.dots = (self.dots + 1) % 4
-            self.status.config(text=self.busy_text + "." * self.dots)
-        self.root.after(300 if self.busy else 100, self.poll_log)
-
-    def ready_text(self):
-        brain = f"（頭脳: {self.agent.model}）" if self.agent else ""
-        if main.WHISPER is not None:
-            return f"準備できました。文字で入力するか「🎤 話す」で声で頼めます{brain}"
-        return f"準備できました。マイクが見つからないため文字入力で使えます{brain}"
-
-    def fill(self, text):
-        self.entry.delete(0, "end")
-        self.entry.insert(0, text)
-        self.entry.focus_set()
-
-    def set_busy(self, busy, text="考え中です。少しお待ちください"):
-        self.busy, self.busy_text = busy, text
-        state = "disabled" if busy else "normal"
-        self.send_btn.config(state=state)
-        self.mic_btn.config(state="normal" if not busy and main.WHISPER is not None else "disabled")
-        if not busy:
-            self.status.config(text=self.ready_text())
+        mic = "音声入力: 使えます" if main.WHISPER is not None else "音声入力: マイクなし"
+        brain = f"頭脳: {self.agent.model}" if self.agent else "頭脳: 未接続"
+        self.root.after(0, lambda: (self.brain_label.configure(text=f"{brain}\n{mic}"), self.set_busy(False)))
 
     # ============================================================
     # 入力
     # ============================================================
     def send(self):
         text = self.entry.get().strip()
-        if not text or self.busy:
+        if not text or self.busy or self.agent is None:
             return
         self.entry.delete(0, "end")
         self.run_request(text)
@@ -264,52 +414,47 @@ class App:
     def toggle_voice(self):
         if self.recorder.stream is None:
             self.recorder.start()
-            self.mic_btn.config(text="■ 止める", bg=RED, fg="white")
-            self.send_btn.config(state="disabled")
-            self.status.config(text="録音中です。話し終えたら「止める」を押してください")
+            self.mic_btn.configure(text="■", fg_color=DANGER, text_color="white")
+            self.send_btn.configure(state="disabled")
+            self.set_status("録音中…もう一度押すと止まります", OFF)
             return
         audio = self.recorder.stop()
-        self.mic_btn.config(text="🎤 話す", bg=GRAY, fg="black")
+        self.mic_btn.configure(text="🎤", fg_color=BG, text_color=TEXT)
         if audio is None:
             self.set_busy(False)
             return
-        self.set_busy(True, "聞き取り中です")
+        self.set_busy(True, "聞き取り中")
 
         def work():
-            text = main.transcribe(main.WHISPER, audio)
-            self.root.after(0, lambda: self.run_request(text, transcribed=True) if text else self.set_busy(False))
+            text = transcribe(audio)
+            self.root.after(0, lambda: self.run_request(text) if text else self.set_busy(False))
         threading.Thread(target=work, daemon=True).start()
 
-    def run_request(self, text, transcribed=False):
-        if not transcribed:
-            self.say(f"\nあなた: {text}\n", "you")
+    def run_request(self, text):
+        self.queue.put(("user", text))
         self.set_busy(True)
 
         def work():
             try:
                 answer = self.agent.run(text)
-                self.log_queue.put((f"🤖 {answer}\n", "ai"))
+                self.queue.put(("ai", answer))
                 if self.voice.get():
                     main.speak(answer)
             except requests.RequestException:
-                print("⚠ AI（Ollama）に接続できません。スタートメニューから「Ollama」を起動してください。\n")
+                print("⚠ AI（Ollama）に接続できません。スタートメニューから「Ollama」を起動してください。")
             except Exception as e:
-                print(f"⚠ うまくいきませんでした: {e}\n")
+                print(f"⚠ うまくいきませんでした: {e}")
             finally:
                 self.root.after(0, lambda: self.set_busy(False))
         threading.Thread(target=work, daemon=True).start()
 
-    def show_plan(self, steps):
-        lines = "".join(f"   {i}. {step}\n" for i, step in enumerate(steps, 1))
-        self.log_queue.put((f"📝 やることを考えました:\n{lines}", "plan"))
-
     def new_conversation(self):
         if self.agent and messagebox.askyesno("新しい会話", "これまでの会話を忘れて、新しく始めますか？", parent=self.root):
             self.agent.forget()
-            self.log.config(state="normal")
-            self.log.delete("1.0", "end")
-            self.log.config(state="disabled")
-            self.say("新しい会話を始めます。ご用件をどうぞ。\n", "note")
+            for child in self.chat.winfo_children():
+                child.destroy()
+            self.wrapped, self.plan_items, self.typing = [], [], None
+            self.queue.put(("ai", "新しい会話を始めます。ご用件をどうぞ。"))
 
     # ============================================================
     # 自分から気づいて知らせる
@@ -323,7 +468,7 @@ class App:
                 alerts = []
             for title, body in alerts:
                 main.notify(title, body)
-                self.log_queue.put((f"\n🔔 {body}\n", "alert"))
+                self.queue.put(("alert", body))
             if alerts and self.voice.get():
                 main.speak("。".join(body for _, body in alerts))
         if not self.busy:
@@ -331,7 +476,7 @@ class App:
         self.root.after(MONITOR_MINUTES * 60 * 1000, self.monitor)
 
     # ============================================================
-    # main.py から呼ばれる確認・質問（作業スレッドから画面スレッドに頼む）
+    # main.py / agent.py から呼ばれる確認・質問（作業スレッドから画面スレッドに頼む）
     # ============================================================
     def on_ui(self, fn, *args):
         result, done = {}, threading.Event()
@@ -345,49 +490,79 @@ class App:
         done.wait()
         return result.get("value")
 
+    def dialog(self, title):
+        win = ctk.CTkToplevel(self.root)
+        win.title(title)
+        win.configure(fg_color=BG)
+        win.transient(self.root)
+        win.resizable(False, False)
+        win.geometry(f"+{self.root.winfo_rootx() + 260}+{self.root.winfo_rooty() + 80}")
+        win.after(100, lambda: (win.lift(), win.focus_force(), win.grab_set()))
+        return win
+
+    def heading(self, win, title, sub=None):
+        ctk.CTkLabel(win, text=title, font=self.font(20, "bold"), text_color=TEXT).pack(
+            anchor="w", padx=28, pady=(24, 2))
+        if sub:
+            ctk.CTkLabel(win, text=sub, font=self.font(12), text_color=MUTED, justify="left").pack(
+                anchor="w", padx=28)
+
+    def buttons(self, win, primary, on_primary, secondary, on_secondary):
+        row = ctk.CTkFrame(win, fg_color="transparent")
+        row.pack(fill="x", padx=28, pady=(12, 24))
+        ctk.CTkButton(row, text=primary, command=on_primary, height=40, corner_radius=20, font=self.font(14, "bold"),
+                      fg_color=ACCENT, hover_color=ACCENT_HOVER).pack(side="right")
+        ctk.CTkButton(row, text=secondary, command=on_secondary, height=40, corner_radius=20, font=self.font(14),
+                      fg_color="transparent", text_color=TEXT, border_width=1, border_color=BORDER,
+                      hover_color=SURFACE).pack(side="right", padx=8)
+
     def confirm(self, question, code=None):
         if not main.CONFIRM_BEFORE_RUN:
             return True
         explanation = ""
         if code and not code.lstrip().startswith("<"):
-            self.busy_text = "内容を確認しています"
+            self.busy_text = "内容を確認中"
             explanation = main.explain_code(code)
         return bool(self.on_ui(self._confirm_dialog, question, code, explanation))
 
     def _confirm_dialog(self, question, code, explanation):
         win = self.dialog("確認")
-        tk.Label(win, text=question, font=FONT_BIG).pack(padx=24, pady=(18, 8))
+        self.heading(win, question)
+        body = ctk.CTkFrame(win, fg_color="transparent")
+        body.pack(fill="x", padx=28, pady=(10, 0))
         if explanation:
-            tk.Label(win, text="この作業ですること:", font=FONT, anchor="w").pack(fill="x", padx=24)
-            tk.Label(win, text=explanation, font=FONT, justify="left", anchor="w", bg="white",
-                     wraplength=int(560 * self.scale), padx=12, pady=8).pack(fill="x", padx=24, pady=4)
+            card = ctk.CTkFrame(body, fg_color=SURFACE, corner_radius=14, border_width=1, border_color=BORDER)
+            card.pack(fill="x")
+            ctk.CTkLabel(card, text="この作業ですること", font=self.font(12, "bold"), text_color=ACCENT).pack(
+                anchor="w", padx=16, pady=(12, 2))
+            ctk.CTkLabel(card, text=explanation, font=self.font(14), text_color=TEXT, justify="left",
+                         wraplength=520).pack(anchor="w", padx=16, pady=(0, 12))
         if code and main.DANGEROUS.search(code):
-            tk.Label(win, text="⚠ ファイルの削除やPCの設定変更が含まれています。よく確認してください。",
-                     font=FONT, fg=RED, wraplength=int(560 * self.scale)).pack(padx=24, pady=4)
+            ctk.CTkLabel(body, text="⚠ ファイルの削除やPCの設定変更が含まれています。よく確認してください。",
+                         font=self.font(13, "bold"), text_color=DANGER, wraplength=520, justify="left").pack(
+                anchor="w", pady=(10, 0))
         if code:
-            box = scrolledtext.ScrolledText(win, font=FONT_CODE, height=12, width=72)
+            box = ctk.CTkTextbox(body, width=560, height=220, font=ctk.CTkFont(family="Consolas", size=12),
+                                 corner_radius=12, fg_color=SURFACE, border_width=1, border_color=BORDER)
             box.insert("1.0", code)
-            box.config(state="disabled")
-            toggle = tk.Button(win, text="▶ 中身（コード）を見る", font=FONT_SMALL, relief="flat", bg=BG,
-                               fg=BLUE, cursor="hand2")
+            box.configure(state="disabled")
+            toggle = ctk.CTkButton(body, text="▶ 中身（コード）を見る", fg_color="transparent", text_color=ACCENT,
+                                   hover_color=PLAN_BG, font=self.font(12), anchor="w", width=10)
 
             def show():
                 if box.winfo_ismapped():
                     box.pack_forget()
-                    toggle.config(text="▶ 中身（コード）を見る")
+                    toggle.configure(text="▶ 中身（コード）を見る")
                 else:
-                    box.pack(padx=24, pady=4, after=toggle)
-                    toggle.config(text="▼ 中身（コード）を隠す")
-            toggle.config(command=show)
-            toggle.pack(anchor="w", padx=20)
+                    box.pack(fill="x", pady=(4, 0), after=toggle)
+                    toggle.configure(text="▼ 中身（コード）を隠す")
+            toggle.configure(command=show)
+            toggle.pack(anchor="w", pady=(8, 0))
             if not explanation:
                 show()
         answer = {"value": False}
-        row = tk.Frame(win)
-        row.pack(pady=16)
-        button(row, "はい、お願いします", lambda: (answer.update(value=True), win.destroy()), primary=True
-               ).pack(side="left", padx=6)
-        button(row, "やめる", win.destroy).pack(side="left", padx=6)
+        self.buttons(win, "はい、お願いします", lambda: (answer.update(value=True), win.destroy()),
+                     "やめる", win.destroy)
         self.root.wait_window(win)
         return answer["value"]
 
@@ -396,25 +571,22 @@ class App:
 
     def _ask_dialog(self, question):
         win = self.dialog("入力")
-        tk.Label(win, text=question, font=FONT_BIG, wraplength=int(520 * self.scale)).pack(padx=24, pady=(18, 4))
-        tk.Label(win, text="分からなければ「スキップ」を押してください", font=FONT_SMALL, fg="#555").pack()
-        row = tk.Frame(win)
-        row.pack(padx=24, pady=12)
-        entry = tk.Entry(row, font=FONT, width=26, relief="solid", bd=1)
-        entry.pack(side="left", ipady=4)
-        entry.focus_set()
+        self.heading(win, question, "分からなければ「スキップ」を押してください")
+        row = ctk.CTkFrame(win, fg_color="transparent")
+        row.pack(fill="x", padx=28, pady=(14, 0))
+        entry = ctk.CTkEntry(row, width=340, height=42, corner_radius=12, font=self.font(15),
+                             border_color=BORDER, fg_color=SURFACE, text_color=TEXT)
+        entry.pack(side="left")
+        win.after(200, entry.focus_set)
         if main.WHISPER is not None:
-            self.voice_button(row, entry).pack(side="left", padx=(6, 0))
+            self.voice_button(row, entry).pack(side="left", padx=(8, 0))
         answer = {"value": ""}
 
         def ok():
             answer["value"] = entry.get().strip()
             win.destroy()
         entry.bind("<Return>", lambda _: ok())
-        buttons = tk.Frame(win)
-        buttons.pack(pady=(0, 16))
-        button(buttons, "OK", ok, primary=True).pack(side="left", padx=6)
-        button(buttons, "スキップ", win.destroy).pack(side="left", padx=6)
+        self.buttons(win, "OK", ok, "スキップ", win.destroy)
         self.root.wait_window(win)
         return answer["value"]
 
@@ -425,17 +597,18 @@ class App:
         def toggle():
             if recorder.stream is None:
                 recorder.start()
-                mic.config(text="■ 止める", bg=RED, fg="white")
+                mic.configure(text="■ 止める", fg_color=DANGER, text_color="white")
                 return
             audio = recorder.stop()
-            mic.config(text="聞き取り中...", bg=GRAY, fg="black", state="disabled")
+            mic.configure(text="聞き取り中…", fg_color=BG, text_color=TEXT, state="disabled")
 
             def work():
-                text = (main.transcribe(main.WHISPER, audio, label="聞き取った内容") or "") if audio is not None else ""
-                self.root.after(0, lambda: (entry.delete(0, "end"), entry.insert(0, text.rstrip("。、 ")),
-                                            mic.config(text="🎤 声で入力", state="normal")))
+                text = transcribe(audio) if audio is not None else ""
+                self.root.after(0, lambda: (entry.delete(0, "end"), entry.insert(0, text),
+                                            mic.configure(text="🎤 声で入力", state="normal")))
             threading.Thread(target=work, daemon=True).start()
-        mic = button(parent, "🎤 声で入力", toggle)
+        mic = ctk.CTkButton(parent, text="🎤 声で入力", command=toggle, height=42, corner_radius=12,
+                            font=self.font(13), fg_color=BG, text_color=TEXT, hover_color=BORDER)
         return mic
 
     def ask_message(self):
@@ -444,22 +617,19 @@ class App:
 
     def _message_dialog(self):
         win = self.dialog("返信したいメッセージ")
-        tk.Label(win, text="返信したいメッセージを貼り付けてください", font=FONT_BIG).pack(padx=24, pady=(18, 4))
-        tk.Label(win, text="メールやチャットの文章をコピーして、下の欄で Ctrl+V を押します",
-                 font=FONT_SMALL, fg="#555").pack()
-        box = scrolledtext.ScrolledText(win, font=FONT, height=10, width=56, wrap="word")
-        box.pack(padx=24, pady=10)
+        self.heading(win, "返信したいメッセージを貼り付けてください",
+                     "メールやチャットの文章をコピーして、下の欄で Ctrl+V を押します")
+        box = ctk.CTkTextbox(win, width=560, height=220, corner_radius=12, font=self.font(14),
+                             fg_color=SURFACE, border_width=1, border_color=BORDER, text_color=TEXT, wrap="word")
+        box.pack(padx=28, pady=(14, 0))
         try:
             box.insert("1.0", self.root.clipboard_get())
         except tk.TclError:
             pass
-        box.focus_set()
+        win.after(200, box.focus_set)
         answer = {"value": ""}
-        row = tk.Frame(win)
-        row.pack(pady=(0, 16))
-        button(row, "このメッセージに返信", lambda: (answer.update(value=box.get("1.0", "end").strip()),
-                                                   win.destroy()), primary=True).pack(side="left", padx=6)
-        button(row, "やめる", win.destroy).pack(side="left", padx=6)
+        self.buttons(win, "このメッセージに返信", lambda: (answer.update(value=box.get("1.0", "end").strip()),
+                                                         win.destroy()), "やめる", win.destroy)
         self.root.wait_window(win)
         return answer["value"]
 
@@ -476,28 +646,30 @@ class App:
 
         win = self.dialog("自分の情報")
         if first:
-            tk.Label(win, text="はじめに、あなたのことを教えてください", font=FONT_BIG).pack(padx=24, pady=(18, 0))
-            tk.Label(win, text="返信の署名や、予定が重なったときの判断に使います。あとから変更できます。",
-                     font=FONT_SMALL, fg="#555").pack(padx=24)
-        form = tk.Frame(win)
-        form.pack(padx=24, pady=12)
+            self.heading(win, "はじめに、あなたのことを教えてください",
+                         "返信の署名や、予定が重なったときの判断に使います。あとから変更できます。")
+        else:
+            self.heading(win, "自分の情報")
+        form = ctk.CTkFrame(win, fg_color="transparent")
+        form.pack(fill="x", padx=28, pady=(14, 0))
         entries = {}
-        for i, (key, label, hint) in enumerate((("名前", "名前", "例: 山田 太郎"),
-                                                 ("所属", "所属", "例: 神戸電子専門学校 AI学科"),
-                                                 ("返信の署名", "返信の署名", "例: 山田"))):
-            tk.Label(form, text=label, font=FONT).grid(row=i * 2, column=0, sticky="w", pady=(6, 0))
-            entry = tk.Entry(form, font=FONT, width=34, relief="solid", bd=1)
-            entry.insert(0, field(key))
-            entry.grid(row=i * 2, column=1, sticky="w", padx=(10, 0), pady=(6, 0))
-            tk.Label(form, text=hint, font=FONT_SMALL, fg="#888").grid(row=i * 2 + 1, column=1, sticky="w", padx=10)
+        for i, (key, hint) in enumerate((("名前", "例: 山田 太郎"), ("所属", "例: 神戸電子専門学校 AI学科"),
+                                         ("返信の署名", "例: 山田"))):
+            ctk.CTkLabel(form, text=key, font=self.font(13), text_color=TEXT).grid(row=i, column=0, sticky="w", pady=6)
+            entry = ctk.CTkEntry(form, width=360, height=38, corner_radius=10, font=self.font(14),
+                                 placeholder_text=hint, border_color=BORDER, fg_color=SURFACE, text_color=TEXT)
+            if field(key):
+                entry.insert(0, field(key))
+            entry.grid(row=i, column=1, sticky="w", padx=(14, 0), pady=6)
             entries[key] = entry
-        tk.Label(form, text="予定が重なったとき\nの優先順位", font=FONT, justify="left").grid(
-            row=6, column=0, sticky="nw", pady=(10, 0))
-        prio = tk.Text(form, font=FONT, width=34, height=5, relief="solid", bd=1)
+        ctk.CTkLabel(form, text="予定が重なった\nときの優先順位", font=self.font(13), text_color=TEXT,
+                     justify="left").grid(row=3, column=0, sticky="nw", pady=6)
+        prio = ctk.CTkTextbox(form, width=360, height=130, corner_radius=10, font=self.font(14),
+                              fg_color=SURFACE, border_width=1, border_color=BORDER, text_color=TEXT)
         prio.insert("1.0", "\n".join(priorities or ["授業・試験", "発表会・コンテスト", "アルバイト", "友人との約束"]))
-        prio.grid(row=6, column=1, sticky="w", padx=(10, 0), pady=(10, 0))
-        tk.Label(form, text="大事なものから順に、1行に1つ", font=FONT_SMALL, fg="#888").grid(
-            row=7, column=1, sticky="w", padx=10)
+        prio.grid(row=3, column=1, sticky="w", padx=(14, 0), pady=6)
+        ctk.CTkLabel(form, text="大事なものから順に、1行に1つ", font=self.font(11), text_color=MUTED).grid(
+            row=4, column=1, sticky="w", padx=14)
 
         def save():
             items = [line.strip() for line in prio.get("1.0", "end").splitlines() if line.strip()]
@@ -506,29 +678,31 @@ class App:
             with open(main.PROFILE_FILE, "w", encoding="utf-8") as f:
                 f.write("\n".join(body) + "\n")
             win.destroy()
-            self.say("✓ 自分の情報を保存しました。\n", "note")
-        row = tk.Frame(win)
-        row.pack(pady=(0, 16))
-        button(row, "保存", save, primary=True).pack(side="left", padx=6)
-        button(row, "あとで" if first else "閉じる", win.destroy).pack(side="left", padx=6)
+            print("✓ 自分の情報を保存しました。")
+        self.buttons(win, "保存", save, "あとで" if first else "閉じる", win.destroy)
 
     def open_calendar(self):
         win = self.dialog("予定を読み込む")
-        tk.Label(win, text="予定（カレンダー）を読み込む", font=FONT_BIG).pack(padx=24, pady=(18, 4))
-        tk.Label(win, justify="left", font=FONT_SMALL, fg="#555", text=(
-            "Googleカレンダーの場合: パソコンで「設定 → インポート/エクスポート → エクスポート」を押すと、\n"
-            "予定のファイル（.ics）がダウンロードできます。Outlookでも「予定表の保存」で作れます。")).pack(padx=24)
-        listbox = tk.Listbox(win, font=FONT, height=5, width=48)
-        listbox.pack(padx=24, pady=10)
+        self.heading(win, "予定（カレンダー）を読み込む",
+                     "Googleカレンダー: パソコンで「設定 → インポート/エクスポート → エクスポート」で .ics を保存\n"
+                     "Outlook: 「予定表の保存」で .ics を保存")
+        listing = ctk.CTkScrollableFrame(win, width=520, height=180, fg_color=SURFACE, corner_radius=14,
+                                         border_width=1, border_color=BORDER)
+        listing.pack(padx=28, pady=(14, 0))
 
         def refresh():
-            listbox.delete(0, "end")
-            files = sorted(os.listdir(main.CALENDAR_DIR))
+            for child in listing.winfo_children():
+                child.destroy()
+            files = sorted(n for n in os.listdir(main.CALENDAR_DIR) if n.endswith(".ics"))
+            if not files:
+                ctk.CTkLabel(listing, text="まだ読み込まれていません", font=self.font(13), text_color=MUTED).pack(pady=20)
             for name in files:
-                if name.endswith(".ics"):
-                    listbox.insert("end", name)
-            if listbox.size() == 0:
-                listbox.insert("end", "（まだ読み込まれていません）")
+                row = ctk.CTkFrame(listing, fg_color="transparent")
+                row.pack(fill="x", pady=2)
+                ctk.CTkLabel(row, text=f"📅  {name}", font=self.font(13), text_color=TEXT).pack(side="left", padx=6)
+                ctk.CTkButton(row, text="外す", width=60, height=28, corner_radius=14, font=self.font(12),
+                              fg_color="transparent", text_color=DANGER, border_width=1, border_color=BORDER,
+                              hover_color=ALERT_BG, command=lambda n=name: remove(n)).pack(side="right", padx=6)
 
         def add():
             paths = filedialog.askopenfilenames(parent=win, title="予定のファイルを選ぶ",
@@ -536,41 +710,34 @@ class App:
             for path in paths:
                 shutil.copy(path, main.CALENDAR_DIR)
             if paths:
-                self.say(f"✓ 予定のファイルを {len(paths)} 個読み込みました。\n", "note")
+                print(f"✓ 予定のファイルを {len(paths)} 個読み込みました。")
             refresh()
 
-        def remove():
-            for i in listbox.curselection():
-                name = listbox.get(i)
-                if name.endswith(".ics"):
-                    os.remove(os.path.join(main.CALENDAR_DIR, name))
+        def remove(name):
+            os.remove(os.path.join(main.CALENDAR_DIR, name))
             refresh()
         refresh()
-        row = tk.Frame(win)
-        row.pack(pady=(0, 16))
-        button(row, "ファイルを選ぶ", add, primary=True).pack(side="left", padx=6)
-        button(row, "選んだものを外す", remove).pack(side="left", padx=6)
-        button(row, "閉じる", win.destroy).pack(side="left", padx=6)
+        self.buttons(win, "ファイルを選ぶ", add, "閉じる", win.destroy)
 
     def open_tasks(self):
         win = self.dialog("お任せ一覧")
-        tk.Label(win, text="お任せした作業", font=FONT_BIG).pack(padx=24, pady=(18, 4))
-        table = tk.Frame(win)
-        table.pack(padx=24, pady=10, fill="x")
+        self.heading(win, "お任せした作業")
+        listing = ctk.CTkScrollableFrame(win, width=640, height=300, fg_color="transparent")
+        listing.pack(padx=20, pady=(10, 0))
 
         def refresh():
-            for child in table.winfo_children():
+            for child in listing.winfo_children():
                 child.destroy()
             entries = main.load_delegated()
             if not entries:
-                tk.Label(table, text="まだ何もお任せされていません。\n「毎朝9時に〜しといて」のように頼むと、ここに表示されます。",
-                         font=FONT, fg="#555").pack(pady=10)
+                ctk.CTkLabel(listing, text="まだ何もお任せされていません。\n「毎朝9時に〜しといて」のように頼むと、ここに表示されます。",
+                             font=self.font(13), text_color=MUTED).pack(pady=40)
                 return
-            loading = tk.Label(table, text="状況を確認しています...", font=FONT, fg="#555")
-            loading.pack()
+            loading = ctk.CTkLabel(listing, text="状況を確認しています…", font=self.font(13), text_color=MUTED)
+            loading.pack(pady=20)
 
             def work():
-                rows = [(e, main.task_status(e, os.path.exists(e["log"]))) for e in entries]
+                rows = [(e, main.task_status(e, os.path.exists(e["log"]))) for e in reversed(entries)]
                 self.root.after(0, lambda: show(rows, loading))
             threading.Thread(target=work, daemon=True).start()
 
@@ -578,40 +745,30 @@ class App:
             if not win.winfo_exists():
                 return
             loading.destroy()
-            for i, header in enumerate(("作業", "いつ", "状況", "")):
-                tk.Label(table, text=header, font=(FONT[0], 10, "bold")).grid(row=0, column=i, sticky="w", padx=6)
-            for r, (entry, status) in enumerate(rows, 1):
-                tk.Label(table, text=entry["task"], font=FONT_SMALL, wraplength=int(240 * self.scale),
-                         justify="left").grid(row=r, column=0, sticky="w", padx=6, pady=3)
-                tk.Label(table, text=entry["when"], font=FONT_SMALL).grid(row=r, column=1, sticky="w", padx=6)
-                tk.Label(table, text=status, font=FONT_SMALL, wraplength=int(220 * self.scale), justify="left",
-                         fg=RED if status.startswith("エラー") else "black").grid(row=r, column=2, sticky="w", padx=6)
-                tk.Button(table, text="取り消す", font=FONT_SMALL, relief="groove", cursor="hand2",
-                          command=lambda e=entry: cancel(e)).grid(row=r, column=3, padx=6)
+            for entry, status in rows:
+                card = ctk.CTkFrame(listing, fg_color=SURFACE, corner_radius=14, border_width=1, border_color=BORDER)
+                card.pack(fill="x", pady=4, padx=4)
+                info = ctk.CTkFrame(card, fg_color="transparent")
+                info.pack(side="left", fill="x", expand=True, padx=14, pady=10)
+                ctk.CTkLabel(info, text=entry["task"], font=self.font(14, "bold"), text_color=TEXT,
+                             wraplength=440, justify="left", anchor="w").pack(anchor="w")
+                color = DANGER if status.startswith("エラー") else (TOOL_FG if status.startswith(("成功", "実行済み")) else MUTED)
+                ctk.CTkLabel(info, text=f"🕒 {entry['when']}　　{status}", font=self.font(12), text_color=color,
+                             wraplength=440, justify="left", anchor="w").pack(anchor="w", pady=(2, 0))
+                ctk.CTkButton(card, text="取り消す", width=84, height=32, corner_radius=16, font=self.font(12),
+                              fg_color="transparent", text_color=DANGER, border_width=1, border_color=BORDER,
+                              hover_color=ALERT_BG, command=lambda e=entry: cancel(e)).pack(side="right", padx=12)
 
         def cancel(entry):
             if messagebox.askyesno("確認", f"「{entry['task']}」のお任せを取り消しますか？", parent=win):
                 main.cancel_delegated(entry)
-                self.say(f"✓ 「{entry['task']}」のお任せを取り消しました。\n", "note")
+                print(f"✓ 「{entry['task']}」のお任せを取り消しました。")
                 refresh()
         refresh()
-        button(win, "閉じる", win.destroy).pack(pady=(0, 16))
-
-    def dialog(self, title):
-        win = tk.Toplevel(self.root)
-        win.title(title)
-        win.transient(self.root)
-        win.grab_set()
-        win.resizable(False, False)
-        win.configure(padx=4, pady=4)
-        win.update_idletasks()
-        x = self.root.winfo_rootx() + int(80 * self.scale)
-        y = self.root.winfo_rooty() + int(60 * self.scale)
-        win.geometry(f"+{x}+{y}")
-        return win
+        self.buttons(win, "閉じる", win.destroy, "更新", refresh)
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     App(root)
     root.mainloop()

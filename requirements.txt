@@ -4,3 +4,4 @@ numpy
 requests
 icalendar
 recurring-ical-events
+customtkinter==5.2.2
